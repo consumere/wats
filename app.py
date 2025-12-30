@@ -862,7 +862,7 @@ with main_tab2:
                 # Check if dimensions are compatible when multiple files
                 if len(datasets) > 1:
                     st.markdown("---")
-                    st.markdown("#### 📊 Multi-File Comparison")
+                    st.markdown("#### 📊 Multi-File Comparison Mode")
 
                     # Check dimension compatibility
                     first_dims = set(datasets[0]['ds'].dims.keys())
@@ -870,12 +870,10 @@ with main_tab2:
 
                     if all_compatible:
                         st.success(f"✅ All {len(datasets)} files have compatible dimensions: {list(first_dims)}")
-                        st.info(f"📊 Will display {len(datasets)} files side-by-side in subplot grid")
                     else:
                         st.warning(f"⚠️ Files have incompatible dimensions.")
                         dim_info = "\n".join([f"- **{ds['name']}**: {list(ds['ds'].dims.keys())}" for ds in datasets])
                         st.markdown(dim_info)
-                        st.info("Will display files with matching variables")
 
                 # For simplicity, work with first dataset for metadata display
                 ds = datasets[0]['ds']
@@ -934,8 +932,17 @@ with main_tab2:
                     # Check if all datasets have this variable
                     datasets_with_var = [d for d in datasets if selected_var in d['ds'].data_vars]
 
-                    if len(datasets_with_var) < len(datasets):
-                        st.warning(f"⚠️ Variable '{selected_var}' found in {len(datasets_with_var)}/{len(datasets)} files")
+                    # Show clear message about what will be displayed
+                    if len(datasets) > 1:
+                        if len(datasets_with_var) < len(datasets):
+                            st.warning(f"⚠️ Variable '{selected_var}' found in {len(datasets_with_var)}/{len(datasets)} files")
+
+                        if len(datasets_with_var) > 1:
+                            st.info(f"📊 Will display {len(datasets_with_var)} files with variable '{selected_var}' side-by-side")
+                        elif len(datasets_with_var) == 1:
+                            st.info(f"📊 Only 1 file has variable '{selected_var}' - showing single file view")
+                        else:
+                            st.error(f"❌ No files contain variable '{selected_var}'")
 
                     var_data = ds[selected_var]
 
