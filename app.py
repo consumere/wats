@@ -923,42 +923,81 @@ with main_tab2:
                 st.markdown("---")
                 st.subheader("🗺️ Variable Visualization")
 
-                # Select variable to plot
-                var_names = list(ds.data_vars.keys())
-                if var_names:
-                    selected_var = st.selectbox("Select variable to visualize", var_names,
-                                               help="Select which variable to display from the NetCDF files")
+                # Different approach for single vs multiple files
+                if len(datasets) == 1:
+                    # SINGLE FILE: Select one variable
+                    var_names = list(ds.data_vars.keys())
+                    if var_names:
+                        selected_var = st.selectbox("Select variable to visualize", var_names,
+                                                   help="Select which variable to display")
 
-                    # Check if all datasets have this variable
-                    datasets_with_var = [d for d in datasets if selected_var in d['ds'].data_vars]
+                        datasets_with_var = [{
+                            'name': datasets[0]['name'],
+                            'ds': datasets[0]['ds'],
+                            'var': selected_var
+                        }]
+                        var_data = ds[selected_var]
 
-                    # Show clear message about what will be displayed
-                    if len(datasets) > 1:
-                        if len(datasets_with_var) < len(datasets):
-                            st.warning(f"⚠️ Variable '{selected_var}' found in {len(datasets_with_var)}/{len(datasets)} files")
+                        # Show variable metadata
+                        st.markdown(f"**Variable:** `{selected_var}`")
+                        st.markdown(f"**Dimensions:** {var_data.dims}")
+                        st.markdown(f"**Shape:** {var_data.shape}")
 
-                        if len(datasets_with_var) > 1:
-                            st.info(f"📊 Will display {len(datasets_with_var)} files with variable '{selected_var}' side-by-side")
-                        elif len(datasets_with_var) == 1:
-                            st.info(f"📊 Only 1 file has variable '{selected_var}' - showing single file view")
-                        else:
-                            st.error(f"❌ No files contain variable '{selected_var}'")
+                        # Display variable attributes if available
+                        if var_data.attrs:
+                            with st.expander("📝 Variable Attributes"):
+                                attr_text = "\n".join([f"**{k}**: {v}" for k, v in var_data.attrs.items()])
+                                st.markdown(attr_text)
+                    else:
+                        st.error("No variables found in file")
+                        datasets_with_var = []
 
-                    var_data = ds[selected_var]
+                else:
+                    # MULTIPLE FILES: Select variable per file
+                    st.markdown("**Multi-File Mode:** Select which variable to display from each file")
 
-                    # Show variable metadata
-                    st.markdown(f"**Variable:** `{selected_var}`")
-                    st.markdown(f"**Dimensions:** {var_data.dims}")
-                    st.markdown(f"**Shape:** {var_data.shape}")
+                    # Prepare list for plotting
+                    datasets_with_var = []
 
-                    # Display variable attributes if available
-                    if var_data.attrs:
-                        with st.expander("📝 Variable Attributes"):
-                            attr_text = "\n".join([f"**{k}**: {v}" for k, v in var_data.attrs.items()])
-                            st.markdown(attr_text)
+                    # Create expander for variable selection per file
+                    with st.expander("🎛️ Variable Selection (per file)", expanded=True):
+                        file_var_selections = {}
 
-                    # Create visualization based on dimensions
-                    if len(var_data.dims) >= 2:
+                        for idx, ds_info in enumerate(datasets):
+                            file_name = ds_info['name']
+                            file_ds = ds_info['ds']
+                            file_vars = list(file_ds.data_vars.keys())
+
+                            if len(file_vars) > 0:
+                                col1, col2 = st.columns([3, 2])
+                                with col1:
+                                    st.markdown(f"**{file_name}**")
+                                with col2:
+                                    selected_var_for_file = st.selectbox(
+                                        f"Variable",
+                                        file_vars,
+                                        key=f"var_select_{idx}",
+                                        label_visibility="collapsed"
+                                    )
+                                    file_var_selections[file_name] = selected_var_for_file
+
+                                # Add to datasets_with_var with selected variable
+                                datasets_with_var.append({
+                                    'name': file_name,
+                                    'ds': file_ds,
+                                    'var': selected_var_for_file
+                                })
+                            else:
+                                st.warning(f"⚠️ {file_name}: No variables found")
+
+                    st.info(f"📊 Will display {len(datasets_with_var)} files side-by-side (each with its selected variable)")
+
+                    # For metadata display, use first file's first variable
+                    if len(datasets_with_var) > 0:
+                        var_data = datasets_with_var[0]['ds'][datasets_with_var[0]['var']]
+
+                # Create visualization based on dimensions (common for both modes)
+                if len(datasets_with_var) > 0 and len(var_data.dims) >= 2:
                         # === COORDINATE DETECTION (like fnc.py) ===
                         # Detect coordinate names
                         coord_names = list(ds.indexes._coord_name_id) if hasattr(ds.indexes, '_coord_name_id') else list(ds.dims.keys())
@@ -1094,9 +1133,9 @@ with main_tab2:
                         # n_files already calculated above
 
                         if n_files == 0:
-                            st.error(f"No files contain variable '{selected_var}'")
+                            st.error(f"❌ No files to display")
                         elif show_multi_layers:
-                            # === MULTI-LAYER SUBPLOT MODE ===
+                            # === MULTI-LAYER SUBPLOT MODE (only for single file) ===
                             n_layers = len(layer_indices)
                             n_cols_grid = min(2, n_layers)
                             n_rows_grid = int(np.ceil(n_layers / n_cols_grid))
@@ -1104,12 +1143,14 @@ with main_tab2:
                             fig, axes = plt.subplots(n_rows_grid, n_cols_grid,
                                                     figsize=(12 * n_cols_grid, 8 * n_rows_grid),
                                                     squeeze=False)
-                            fig.suptitle(f'{selected_var} - Multi-Layer Comparison (File: {datasets_with_var[0]["name"]})',
-                                       fontsize=18, y=0.995)
 
-                            # Use first file for multi-layer display
+                            # Use first (and only) file for multi-layer display
                             file_ds = datasets_with_var[0]['ds']
-                            file_var_data = file_ds[selected_var]
+                            file_var_name = datasets_with_var[0]['var']
+                            file_var_data = file_ds[file_var_name]
+
+                            fig.suptitle(f'{file_var_name} - Multi-Layer Comparison (File: {datasets_with_var[0]["name"]})',
+                                       fontsize=18, y=0.995)
 
                             # Detect coordinates
                             file_coord_names = list(file_ds.indexes._coord_name_id) if hasattr(file_ds.indexes, '_coord_name_id') else list(file_ds.dims.keys())
@@ -1165,7 +1206,7 @@ with main_tab2:
                             st.download_button(
                                 label="📥 Download as PDF",
                                 data=pdf_bytes_nc,
-                                file_name=f"netcdf_{selected_var}_multilayer.pdf",
+                                file_name=f"netcdf_{file_var_name}_multilayer.pdf",
                                 mime="application/pdf",
                                 key="pdf_nc"
                             )
@@ -1178,7 +1219,7 @@ with main_tab2:
                             fig, axes = plt.subplots(n_rows_grid, n_cols_grid,
                                                     figsize=(12 * n_cols_grid, 8 * n_rows_grid),
                                                     squeeze=False)
-                            fig.suptitle(f'{selected_var} - Multi-File Comparison', fontsize=18, y=0.995)
+                            fig.suptitle(f'Multi-File Comparison ({n_files} files)', fontsize=18, y=0.995)
 
                             for idx, ds_info in enumerate(datasets_with_var):
                                 row = idx // n_cols_grid
@@ -1187,7 +1228,8 @@ with main_tab2:
 
                                 # Process data for this file
                                 file_ds = ds_info['ds']
-                                file_var_data = file_ds[selected_var]
+                                file_var_name = ds_info['var']  # Each file has its own variable!
+                                file_var_data = file_ds[file_var_name]
 
                                 # Detect coordinates for this file
                                 file_coord_names = list(file_ds.indexes._coord_name_id) if hasattr(file_ds.indexes, '_coord_name_id') else list(file_ds.dims.keys())
@@ -1217,10 +1259,10 @@ with main_tab2:
                                 # Plot
                                 im = file_plot_data.plot(ax=ax, cmap='cividis', add_colorbar=True)
 
-                                # Title with file name and layer info
-                                title = f'{ds_info["name"]}'
+                                # Title with file name, variable, and layer info
+                                title = f'{ds_info["name"]}\n{file_var_name}'
                                 if file_tim and file_tim in file_var_data.dims and file_var_data.sizes[file_tim] > 1:
-                                    title += f'\nLayer: {layer_indices[0]}'
+                                    title += f' | Layer: {layer_indices[0]}'
 
                                 ax.set_title(title, fontsize=12)
                                 ax.set_xlabel('')
@@ -1242,7 +1284,7 @@ with main_tab2:
                             st.download_button(
                                 label="📥 Download as PDF",
                                 data=pdf_bytes_nc,
-                                file_name=f"netcdf_{selected_var}_comparison_layer{layer_indices[0]}.pdf",
+                                file_name=f"netcdf_multifile_comparison_layer{layer_indices[0]}.pdf",
                                 mime="application/pdf",
                                 key="pdf_nc"
                             )
@@ -1250,7 +1292,8 @@ with main_tab2:
                         else:
                             # === SINGLE PLOT MODE ===
                             file_ds = datasets_with_var[0]['ds']
-                            file_var_data = file_ds[selected_var]
+                            file_var_name = datasets_with_var[0]['var']
+                            file_var_data = file_ds[file_var_name]
 
                             # Detect coordinates
                             file_coord_names = list(file_ds.indexes._coord_name_id) if hasattr(file_ds.indexes, '_coord_name_id') else list(file_ds.dims.keys())
@@ -1289,7 +1332,7 @@ with main_tab2:
                             im = plot_data.plot(ax=ax, cmap='cividis', add_colorbar=True)
 
                             # Title with layer info
-                            title = f'{selected_var}'
+                            title = f'{file_var_name}'
                             if file_tim and file_tim in file_var_data.dims and file_var_data.sizes[file_tim] > 1:
                                 title += f' | Layer: {layer_indices[0]}'
                             if enable_mask and mask_value is not None:
@@ -1309,7 +1352,7 @@ with main_tab2:
                             st.download_button(
                                 label="📥 Download as PDF",
                                 data=pdf_bytes_nc,
-                                file_name=f"netcdf_{selected_var}_layer{layer_indices[0]}.pdf",
+                                file_name=f"netcdf_{file_var_name}_layer{layer_indices[0]}.pdf",
                                 mime="application/pdf",
                                 key="pdf_nc"
                             )
@@ -1321,7 +1364,8 @@ with main_tab2:
                         # Use first file for statistics display
                         if len(datasets_with_var) > 0:
                             first_file_ds = datasets_with_var[0]['ds']
-                            first_file_var = first_file_ds[selected_var]
+                            first_file_var_name = datasets_with_var[0]['var']
+                            first_file_var = first_file_ds[first_file_var_name]
 
                             # Process data like we did for plotting
                             first_coord_names = list(first_file_ds.indexes._coord_name_id) if hasattr(first_file_ds.indexes, '_coord_name_id') else list(first_file_ds.dims.keys())
@@ -1368,24 +1412,28 @@ with main_tab2:
                                 st.markdown("**Quantiles:**")
                                 st.dataframe(quant_df, hide_index=True, use_container_width=True)
 
-                    else:
-                        st.warning("Variable needs at least 2 dimensions for visualization")
+                        else:
+                            st.warning("No datasets available for statistics")
 
-                    # Export to CSV
-                    st.subheader("💾 Export Data")
-                    if st.button("Convert to CSV"):
-                        # Convert to pandas dataframe
-                        df_nc = var_data.to_dataframe().reset_index()
-                        csv_data = df_nc.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Download CSV",
-                            data=csv_data,
-                            file_name=f"{selected_var}.csv",
-                            mime="text/csv"
-                        )
+                        # Export to CSV
+                        st.subheader("💾 Export Data")
+                        if st.button("Convert to CSV"):
+                            # Convert to pandas dataframe
+                            df_nc = var_data.to_dataframe().reset_index()
+                            csv_data = df_nc.to_csv(index=False)
+
+                            # Use variable name from first file
+                            export_var_name = datasets_with_var[0]['var'] if len(datasets_with_var) > 0 else "data"
+
+                            st.download_button(
+                                label="📥 Download CSV",
+                                data=csv_data,
+                                file_name=f"{export_var_name}.csv",
+                                mime="text/csv"
+                            )
 
                 else:
-                    st.warning("No variables found in NetCDF file")
+                    st.warning("Variable needs at least 2 dimensions for visualization")
 
         except Exception as e:
             st.error(f"❌ Error processing NetCDF file(s): {str(e)}")
