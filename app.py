@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import os
+import xarray as xr
+from hydroeval import evaluator, nse, kge
 
 # Configure Streamlit page
 st.set_page_config(
@@ -315,11 +317,118 @@ def fig_to_pdf_bytes(fig):
     return buf.getvalue()
 
 
+def read_netcdf_file(file_path):
+    """Read NetCDF file using xarray."""
+    try:
+        ds = xr.open_dataset(file_path)
+        return ds
+    except Exception as e:
+        st.error(f"Error reading NetCDF file: {e}")
+        return None
+
+
+def plot_model_comparison(df, col1, col2, log_scale=False, unit=None):
+    """Plot model vs observation comparison with statistics (like fplot4.py)."""
+    # Calculate statistics
+    valid_data = df[[col1, col2]].dropna()
+
+    if len(valid_data) < 2:
+        st.warning("Not enough valid data points for comparison")
+        return None
+
+    # Pearson correlation
+    corr_matrix = valid_data.corr()
+    pearson_r = corr_matrix.iloc[0, 1]
+    r2 = pearson_r ** 2
+
+    # NSE and KGE
+    try:
+        nse_score = evaluator(nse, valid_data[col1].values, valid_data[col2].values)
+        nse_val = nse_score[0].item() if hasattr(nse_score[0], 'item') else nse_score[0]
+    except:
+        nse_val = np.nan
+
+    try:
+        kge_score = evaluator(kge, valid_data[col1].values, valid_data[col2].values)
+        kge_val = kge_score[0].item() if hasattr(kge_score[0], 'item') else kge_score[0]
+    except:
+        kge_val = np.nan
+
+    # Create plot
+    fig, ax = plt.subplots(figsize=(16, 10))
+
+    # Plot data
+    df[col1].plot(ax=ax, style='b--', linewidth=1.5, label=col1)
+    df[col2].plot(ax=ax, style='r-', linewidth=1.5, label=col2)
+
+    ax.set_yscale('log' if log_scale else 'linear')
+    ax.set_xlabel('')
+
+    if unit:
+        ax.set_ylabel(f'Value [{unit}]' + (' (log)' if log_scale else ''), fontsize=12)
+    else:
+        ax.set_ylabel('Value' + (' (log)' if log_scale else ''), fontsize=12)
+
+    # Title with statistics
+    title = f'Model Performance Comparison'
+    subtitle = f'Pearson R²: {r2:.3f} | NSE: {nse_val:.3f} | Kling-Gupta Efficiency: {kge_val:.3f}'
+
+    ax.set_title(subtitle, fontsize=14, pad=10)
+    fig.suptitle(title, fontsize=16, y=0.995)
+
+    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=10)
+    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.7)
+
+    plt.tight_layout()
+    return fig
+
+
+def plot_multi_overview(df, selected_cols, log_scale=False, unit=None):
+    """Create overview plot with multiple subplots for selected columns."""
+    n_cols = len(selected_cols)
+    if n_cols == 0:
+        return None
+
+    # Calculate grid layout
+    n_rows = int(np.ceil(n_cols / 2))
+    n_plot_cols = min(2, n_cols)
+
+    fig, axes = plt.subplots(n_rows, n_plot_cols, figsize=(14, 4 * n_rows), squeeze=False)
+    fig.suptitle('Multi-Variable Overview', fontsize=16, y=0.995)
+
+    for idx, col in enumerate(selected_cols):
+        row = idx // 2
+        col_idx = idx % 2
+        ax = axes[row, col_idx]
+
+        df[col].plot(ax=ax, linewidth=1.5, color=f'C{idx}')
+        ax.set_yscale('log' if log_scale else 'linear')
+        ax.set_xlabel('')
+
+        if unit:
+            ax.set_ylabel(f'{col} [{unit}]', fontsize=10)
+        else:
+            ax.set_ylabel(col, fontsize=10)
+
+        # Add basic statistics
+        mean_val = df[col].mean()
+        std_val = df[col].std()
+        ax.set_title(f'{col} | Mean: {mean_val:.2f} | Std: {std_val:.2f}', fontsize=11)
+        ax.grid(True, alpha=0.3, linestyle='--')
+
+    # Hide empty subplots
+    if n_cols % 2 != 0 and n_cols > 1:
+        axes[n_rows-1, 1].axis('off')
+
+    plt.tight_layout()
+    return fig
+
+
 # Streamlit app
-st.title("📊 Time Series Data Viewer")
+st.title("📊 WATS - Water & Atmospheric Time Series Viewer")
 st.markdown("""
-This application reads and visualizes whitespace-delimited time series data files.
-Upload one or multiple files with columns: YY, MM, DD, HH followed by data columns.
+Advanced visualization tool for hydrological and meteorological data.
+Upload time series files (text/CSV) or raster data (NetCDF).
 """)
 
 # Sidebar with instructions
@@ -340,18 +449,27 @@ with st.sidebar:
     - 🔄 Rolling statistics
     - 📅 Seasonal analysis
     - 🔗 Correlation analysis
-    - 📥 CSV export
+    - 📈 Model performance (R², NSE, KGE)
+    - 🗺️ Multi-variable overview
+    - 🌐 NetCDF raster viewer
+    - 📥 PDF/CSV export
     """)
 
     st.header("ℹ️ About")
-    st.info("Time Series Viewer v2.0\n\nOptimized for hydrological and meteorological data")
+    st.info("WATS v3.0\n\nOptimized for hydrological and meteorological data analysis")
 
-# File upload - MULTIPLE FILES (NO TYPE RESTRICTION)
-uploaded_files = st.file_uploader(
-    "Upload your data file(s)",
-    accept_multiple_files=True,
-    help="Upload one or more delimited files with temporal data (any file type)"
-)
+# Main content with tabs for different data types
+main_tab1, main_tab2 = st.tabs(["📈 Time Series Data", "🌐 NetCDF Raster Data"])
+
+# ====================== TIME SERIES TAB ======================
+with main_tab1:
+    # File upload - MULTIPLE FILES (NO TYPE RESTRICTION)
+    uploaded_files = st.file_uploader(
+        "Upload your time series data file(s)",
+        accept_multiple_files=True,
+        help="Upload one or more delimited files with temporal data (any file type)",
+        key="ts_upload"
+    )
 
 if uploaded_files:
     temp_dir = "temp_uploads"
@@ -445,12 +563,14 @@ if uploaded_files:
                 df_selected = df[selected_columns]
 
                 # Tab layout for different visualizations
-                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
                     "📉 Time Series",
                     "📊 Aggregated Stats",
                     "🔄 Rolling Statistics",
                     "📅 Seasonal Patterns",
-                    "🔗 Correlations"
+                    "🔗 Correlations",
+                    "📈 Model Performance",
+                    "🗺️ Multi-Overview"
                 ])
 
                 with tab1:
@@ -560,6 +680,56 @@ if uploaded_files:
                     else:
                         st.info("Please select at least 2 columns to view correlations.")
 
+                with tab6:
+                    st.markdown("### Model Performance Comparison")
+                    st.markdown("Compare two time series (e.g., modeled vs observed) with statistical metrics")
+
+                    if len(selected_columns) >= 2:
+                        col_compare1, col_compare2 = st.columns(2)
+                        with col_compare1:
+                            compare_col1 = st.selectbox("First variable (e.g., Observed)", selected_columns, key="comp1")
+                        with col_compare2:
+                            compare_col2 = st.selectbox("Second variable (e.g., Modeled)",
+                                                        [c for c in selected_columns if c != compare_col1],
+                                                        key="comp2")
+
+                        fig6 = plot_model_comparison(df, compare_col1, compare_col2, log_scale, unit)
+                        if fig6:
+                            st.pyplot(fig6)
+                            plt.close(fig6)
+
+                            # PDF export
+                            pdf_bytes6 = fig_to_pdf_bytes(fig6)
+                            st.download_button(
+                                label="📥 Download as PDF",
+                                data=pdf_bytes6,
+                                file_name=f"model_comparison_{compare_col1}_vs_{compare_col2}.pdf",
+                                mime="application/pdf",
+                                key="pdf_tab6"
+                            )
+                    else:
+                        st.info("Please select at least 2 columns for comparison")
+
+                with tab7:
+                    st.markdown("### Multi-Variable Overview")
+                    st.markdown("Compare multiple variables in subplot grid")
+
+                    if len(selected_columns) > 0:
+                        fig7 = plot_multi_overview(df, selected_columns, log_scale, unit)
+                        if fig7:
+                            st.pyplot(fig7)
+                            plt.close(fig7)
+
+                            # PDF export
+                            pdf_bytes7 = fig_to_pdf_bytes(fig7)
+                            st.download_button(
+                                label="📥 Download as PDF",
+                                data=pdf_bytes7,
+                                file_name="multi_overview.pdf",
+                                mime="application/pdf",
+                                key="pdf_tab7"
+                            )
+
                 # Download section
                 st.markdown("---")
                 st.subheader("💾 Download Processed Data")
@@ -599,3 +769,173 @@ if uploaded_files:
                 os.rmdir(temp_dir)
             except OSError:
                 pass  # Directory not empty, that's ok
+
+# ====================== NETCDF TAB ======================
+with main_tab2:
+    st.markdown("### NetCDF Raster Data Viewer")
+    st.markdown("Upload NetCDF (.nc) files for raster visualization and analysis")
+
+    nc_uploaded = st.file_uploader(
+        "Upload NetCDF file",
+        type=['nc', 'nc4', 'netcdf'],
+        help="Upload a NetCDF file containing raster data",
+        key="nc_upload"
+    )
+
+    if nc_uploaded:
+        temp_dir_nc = "temp_nc"
+        os.makedirs(temp_dir_nc, exist_ok=True)
+        nc_path = os.path.join(temp_dir_nc, nc_uploaded.name)
+
+        try:
+            with open(nc_path, "wb") as f:
+                f.write(nc_uploaded.getbuffer())
+
+            # Read NetCDF file
+            ds = read_netcdf_file(nc_path)
+
+            if ds is not None:
+                st.success(f"✅ Successfully loaded NetCDF file: {nc_uploaded.name}")
+
+                # Display dataset information
+                st.subheader("📋 Dataset Information")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Dimensions", len(ds.dims))
+                with col2:
+                    st.metric("Variables", len(ds.data_vars))
+                with col3:
+                    st.metric("Attributes", len(ds.attrs))
+
+                # Show dimensions
+                with st.expander("📐 Dimensions", expanded=True):
+                    dim_df = pd.DataFrame({
+                        'Dimension': list(ds.dims.keys()),
+                        'Size': list(ds.dims.values())
+                    })
+                    st.dataframe(dim_df, use_container_width=True)
+
+                # Show variables
+                with st.expander("📊 Variables", expanded=True):
+                    var_list = []
+                    for var_name in ds.data_vars:
+                        var = ds[var_name]
+                        var_list.append({
+                            'Variable': var_name,
+                            'Dimensions': str(var.dims),
+                            'Shape': str(var.shape),
+                            'Type': str(var.dtype)
+                        })
+                    var_df = pd.DataFrame(var_list)
+                    st.dataframe(var_df, use_container_width=True)
+
+                # Show global attributes
+                with st.expander("ℹ️ Global Attributes"):
+                    if ds.attrs:
+                        attr_df = pd.DataFrame(list(ds.attrs.items()), columns=['Attribute', 'Value'])
+                        st.dataframe(attr_df, use_container_width=True)
+                    else:
+                        st.info("No global attributes found")
+
+                # Variable visualization
+                st.subheader("🗺️ Variable Visualization")
+
+                # Select variable to plot
+                var_names = list(ds.data_vars.keys())
+                if var_names:
+                    selected_var = st.selectbox("Select variable to visualize", var_names)
+
+                    var_data = ds[selected_var]
+
+                    # Show variable metadata
+                    st.markdown(f"**Variable:** `{selected_var}`")
+                    st.markdown(f"**Dimensions:** {var_data.dims}")
+                    st.markdown(f"**Shape:** {var_data.shape}")
+
+                    # Create visualization based on dimensions
+                    if len(var_data.dims) >= 2:
+                        # For multi-dimensional data, allow slicing
+                        slice_controls = {}
+
+                        for dim in var_data.dims[:-2]:  # Skip last 2 dims (usually spatial)
+                            dim_size = var_data.sizes[dim]
+                            if dim_size > 1:
+                                slice_controls[dim] = st.slider(
+                                    f"Select {dim} index",
+                                    0, dim_size - 1, 0,
+                                    key=f"slice_{dim}"
+                                )
+
+                        # Extract 2D slice
+                        plot_data = var_data
+                        for dim, idx in slice_controls.items():
+                            plot_data = plot_data.isel({dim: idx})
+
+                        # Plot
+                        fig, ax = plt.subplots(figsize=(12, 8))
+
+                        im = plot_data.plot(ax=ax, cmap='viridis', add_colorbar=True)
+
+                        ax.set_title(f'{selected_var}', fontsize=14)
+                        ax.set_xlabel('')
+                        ax.set_ylabel('')
+
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                        plt.close()
+
+                        # PDF export
+                        pdf_bytes_nc = fig_to_pdf_bytes(fig)
+                        st.download_button(
+                            label="📥 Download as PDF",
+                            data=pdf_bytes_nc,
+                            file_name=f"netcdf_{selected_var}.pdf",
+                            mime="application/pdf",
+                            key="pdf_nc"
+                        )
+
+                        # Show statistics
+                        st.subheader("📊 Statistics")
+                        stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
+                        with stats_col1:
+                            st.metric("Mean", f"{float(plot_data.mean().values):.4f}")
+                        with stats_col2:
+                            st.metric("Std Dev", f"{float(plot_data.std().values):.4f}")
+                        with stats_col3:
+                            st.metric("Min", f"{float(plot_data.min().values):.4f}")
+                        with stats_col4:
+                            st.metric("Max", f"{float(plot_data.max().values):.4f}")
+
+                    else:
+                        st.warning("Variable needs at least 2 dimensions for visualization")
+
+                    # Export to CSV
+                    st.subheader("💾 Export Data")
+                    if st.button("Convert to CSV"):
+                        # Convert to pandas dataframe
+                        df_nc = var_data.to_dataframe().reset_index()
+                        csv_data = df_nc.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download CSV",
+                            data=csv_data,
+                            file_name=f"{selected_var}.csv",
+                            mime="text/csv"
+                        )
+
+                else:
+                    st.warning("No variables found in NetCDF file")
+
+        except Exception as e:
+            st.error(f"❌ Error processing NetCDF file: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+
+        finally:
+            # Clean up
+            if os.path.exists(nc_path):
+                os.remove(nc_path)
+            if os.path.exists(temp_dir_nc):
+                try:
+                    os.rmdir(temp_dir_nc)
+                except OSError:
+                    pass
