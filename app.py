@@ -1006,54 +1006,160 @@ with main_tab2:
 
                         # === TIME LAYER SELECTION ===
                         time_layer_idx = 0
+                        show_multi_layers = False
+                        layer_indices = [0]
+
                         if tim and tim in var_data.dims:
                             time_size = var_data.sizes[tim]
                             if time_size > 1:
                                 st.markdown("---")
                                 st.markdown("#### ⏱️ Time Layer Selection")
-                                time_layer_idx = st.slider(
-                                    f"Select time layer (dimension: {tim})",
-                                    0, time_size - 1, 0,
-                                    help=f"Select which time step to visualize (0-{time_size-1})"
+
+                                # Option to show single or multiple layers
+                                display_mode = st.radio(
+                                    "Display mode",
+                                    ["Single layer", "Multiple layers (subplots)"],
+                                    horizontal=True,
+                                    help="Choose to display one layer or multiple layers side-by-side"
                                 )
-                                st.markdown(f"**Selected layer:** {time_layer_idx} of {time_size}")
 
-                        # === PROCESS DATA ===
-                        plot_data = var_data.copy()
+                                if display_mode == "Single layer":
+                                    time_layer_idx = st.slider(
+                                        f"Select time layer (dimension: {tim})",
+                                        0, time_size - 1, 0,
+                                        help=f"Select which time step to visualize (0-{time_size-1})"
+                                    )
+                                    st.markdown(f"**Selected layer:** {time_layer_idx} of {time_size}")
+                                    layer_indices = [time_layer_idx]
+                                else:
+                                    # Multi-layer subplot mode
+                                    show_multi_layers = True
 
-                        # Transpose if WASIM grid
-                        if needs_transpose:
-                            if tim and tim in plot_data.dims:
-                                # Select time layer first, then transpose
-                                plot_data = plot_data.isel({tim: time_layer_idx})
-                                plot_data = plot_data.transpose(lat, lng) if lat and lng else plot_data.transpose()
-                            else:
-                                plot_data = plot_data.transpose()
-                        else:
-                            # Select time layer if exists
-                            if tim and tim in plot_data.dims and plot_data.sizes[tim] > 1:
-                                plot_data = plot_data.isel({tim: time_layer_idx})
+                                    # Limit to 8 layers
+                                    max_layers = min(8, time_size)
+                                    if time_size > 8:
+                                        st.warning(f"⚠️ File has {time_size} time layers. Limiting to first 8 for visualization.")
 
-                        # Apply masking (like fnc.py line 45)
-                        if enable_mask and mask_value is not None:
-                            plot_data = plot_data.where(plot_data.values > mask_value)
+                                    # Let user select how many layers to show
+                                    n_layers = st.slider(
+                                        "Number of layers to display",
+                                        1, max_layers, min(4, max_layers),
+                                        help=f"Select how many time layers to show (max 8)"
+                                    )
 
-                            # Check if all data is masked
-                            if np.all(np.isnan(plot_data.values)):
-                                st.error(f"⚠️ All data is masked with threshold {mask_value}. Try adjusting the mask value.")
-                            else:
-                                valid_pct = 100 * (1 - np.isnan(plot_data.values).sum() / plot_data.values.size)
-                                st.success(f"✅ {valid_pct:.1f}% of data remains after masking")
+                                    # Let user select which layers
+                                    st.markdown(f"**Select {n_layers} layers to display:**")
+                                    col_select1, col_select2 = st.columns(2)
+
+                                    with col_select1:
+                                        start_layer = st.number_input(
+                                            "Start layer",
+                                            min_value=0,
+                                            max_value=max(0, time_size - n_layers),
+                                            value=0,
+                                            help="Starting layer index"
+                                        )
+
+                                    with col_select2:
+                                        layer_step = st.number_input(
+                                            "Layer step",
+                                            min_value=1,
+                                            max_value=max(1, time_size // n_layers),
+                                            value=1,
+                                            help="Step between layers (1=consecutive, 2=every other, etc.)"
+                                        )
+
+                                    # Calculate layer indices
+                                    layer_indices = [start_layer + i * layer_step for i in range(n_layers)]
+                                    layer_indices = [idx for idx in layer_indices if idx < time_size]
+
+                                    st.info(f"📊 Will display layers: {layer_indices}")
 
                         # === PLOT ===
                         st.markdown("---")
 
-                        # Create subplot grid for multiple files
+                        # Determine what to plot: multi-layer subplots OR multi-file subplots OR single plot
                         n_files = len(datasets_with_var)
+
                         if n_files == 0:
                             st.error(f"No files contain variable '{selected_var}'")
-                        else:
-                            # Calculate subplot grid
+                        elif show_multi_layers:
+                            # === MULTI-LAYER SUBPLOT MODE ===
+                            n_layers = len(layer_indices)
+                            n_cols_grid = min(2, n_layers)
+                            n_rows_grid = int(np.ceil(n_layers / n_cols_grid))
+
+                            fig, axes = plt.subplots(n_rows_grid, n_cols_grid,
+                                                    figsize=(12 * n_cols_grid, 8 * n_rows_grid),
+                                                    squeeze=False)
+                            fig.suptitle(f'{selected_var} - Multi-Layer Comparison (File: {datasets_with_var[0]["name"]})',
+                                       fontsize=18, y=0.995)
+
+                            # Use first file for multi-layer display
+                            file_ds = datasets_with_var[0]['ds']
+                            file_var_data = file_ds[selected_var]
+
+                            # Detect coordinates
+                            file_coord_names = list(file_ds.indexes._coord_name_id) if hasattr(file_ds.indexes, '_coord_name_id') else list(file_ds.dims.keys())
+                            file_lng = next((i for i in file_coord_names if i.startswith("lon") or i.endswith("x") or i == "x"), None)
+                            file_lat = next((i for i in file_coord_names if i.startswith("lat") or i.endswith("y") or i == "y"), None)
+                            file_tim = next((i for i in file_coord_names if i.startswith("t") or i == "time" or i == "t"), None)
+                            file_needs_transpose = file_coord_names == ["x", "y", "t"] or (file_lng == "x" and file_lat == "y" and file_tim == "t")
+
+                            for idx, layer_idx in enumerate(layer_indices):
+                                row = idx // n_cols_grid
+                                col = idx % n_cols_grid
+                                ax = axes[row, col]
+
+                                # Process data for this layer
+                                layer_plot_data = file_var_data.copy()
+
+                                # Transpose if WASIM grid
+                                if file_needs_transpose:
+                                    if file_tim and file_tim in layer_plot_data.dims:
+                                        layer_plot_data = layer_plot_data.isel({file_tim: layer_idx})
+                                        layer_plot_data = layer_plot_data.transpose(file_lat, file_lng) if file_lat and file_lng else layer_plot_data.transpose()
+                                    else:
+                                        layer_plot_data = layer_plot_data.transpose()
+                                else:
+                                    if file_tim and file_tim in layer_plot_data.dims:
+                                        layer_plot_data = layer_plot_data.isel({file_tim: layer_idx})
+
+                                # Apply masking
+                                if enable_mask and mask_value is not None:
+                                    layer_plot_data = layer_plot_data.where(layer_plot_data.values > mask_value)
+
+                                # Plot
+                                im = layer_plot_data.plot(ax=ax, cmap='cividis', add_colorbar=True)
+
+                                # Title with layer info
+                                ax.set_title(f'Layer {layer_idx}', fontsize=12)
+                                ax.set_xlabel('')
+                                ax.set_ylabel('')
+                                ax.grid(True, alpha=0.3)
+
+                            # Hide empty subplots
+                            for idx in range(n_layers, n_rows_grid * n_cols_grid):
+                                row = idx // n_cols_grid
+                                col = idx % n_cols_grid
+                                axes[row, col].axis('off')
+
+                            plt.tight_layout()
+                            st.pyplot(fig)
+                            plt.close()
+
+                            # PDF export
+                            pdf_bytes_nc = fig_to_pdf_bytes(fig)
+                            st.download_button(
+                                label="📥 Download as PDF",
+                                data=pdf_bytes_nc,
+                                file_name=f"netcdf_{selected_var}_multilayer.pdf",
+                                mime="application/pdf",
+                                key="pdf_nc"
+                            )
+
+                        elif n_files > 1:
+                            # === MULTI-FILE SUBPLOT MODE ===
                             n_cols_grid = min(2, n_files)
                             n_rows_grid = int(np.ceil(n_files / n_cols_grid))
 
@@ -1076,8 +1182,6 @@ with main_tab2:
                                 file_lng = next((i for i in file_coord_names if i.startswith("lon") or i.endswith("x") or i == "x"), None)
                                 file_lat = next((i for i in file_coord_names if i.startswith("lat") or i.endswith("y") or i == "y"), None)
                                 file_tim = next((i for i in file_coord_names if i.startswith("t") or i == "time" or i == "t"), None)
-
-                                # Check if needs transpose
                                 file_needs_transpose = file_coord_names == ["x", "y", "t"] or (file_lng == "x" and file_lat == "y" and file_tim == "t")
 
                                 # Process data
@@ -1086,14 +1190,13 @@ with main_tab2:
                                 # Transpose if WASIM grid
                                 if file_needs_transpose:
                                     if file_tim and file_tim in file_plot_data.dims:
-                                        file_plot_data = file_plot_data.isel({file_tim: time_layer_idx})
+                                        file_plot_data = file_plot_data.isel({file_tim: layer_indices[0]})
                                         file_plot_data = file_plot_data.transpose(file_lat, file_lng) if file_lat and file_lng else file_plot_data.transpose()
                                     else:
                                         file_plot_data = file_plot_data.transpose()
                                 else:
-                                    # Select time layer if exists
                                     if file_tim and file_tim in file_plot_data.dims and file_plot_data.sizes[file_tim] > 1:
-                                        file_plot_data = file_plot_data.isel({file_tim: time_layer_idx})
+                                        file_plot_data = file_plot_data.isel({file_tim: layer_indices[0]})
 
                                 # Apply masking
                                 if enable_mask and mask_value is not None:
@@ -1105,7 +1208,7 @@ with main_tab2:
                                 # Title with file name and layer info
                                 title = f'{ds_info["name"]}'
                                 if file_tim and file_tim in file_var_data.dims and file_var_data.sizes[file_tim] > 1:
-                                    title += f'\nLayer: {time_layer_idx}'
+                                    title += f'\nLayer: {layer_indices[0]}'
 
                                 ax.set_title(title, fontsize=12)
                                 ax.set_xlabel('')
@@ -1127,7 +1230,74 @@ with main_tab2:
                             st.download_button(
                                 label="📥 Download as PDF",
                                 data=pdf_bytes_nc,
-                                file_name=f"netcdf_{selected_var}_comparison_layer{time_layer_idx}.pdf",
+                                file_name=f"netcdf_{selected_var}_comparison_layer{layer_indices[0]}.pdf",
+                                mime="application/pdf",
+                                key="pdf_nc"
+                            )
+
+                        else:
+                            # === SINGLE PLOT MODE ===
+                            file_ds = datasets_with_var[0]['ds']
+                            file_var_data = file_ds[selected_var]
+
+                            # Detect coordinates
+                            file_coord_names = list(file_ds.indexes._coord_name_id) if hasattr(file_ds.indexes, '_coord_name_id') else list(file_ds.dims.keys())
+                            file_lng = next((i for i in file_coord_names if i.startswith("lon") or i.endswith("x") or i == "x"), None)
+                            file_lat = next((i for i in file_coord_names if i.startswith("lat") or i.endswith("y") or i == "y"), None)
+                            file_tim = next((i for i in file_coord_names if i.startswith("t") or i == "time" or i == "t"), None)
+                            file_needs_transpose = file_coord_names == ["x", "y", "t"] or (file_lng == "x" and file_lat == "y" and file_tim == "t")
+
+                            # Process data
+                            plot_data = file_var_data.copy()
+
+                            # Transpose if WASIM grid
+                            if file_needs_transpose:
+                                if file_tim and file_tim in plot_data.dims:
+                                    plot_data = plot_data.isel({file_tim: layer_indices[0]})
+                                    plot_data = plot_data.transpose(file_lat, file_lng) if file_lat and file_lng else plot_data.transpose()
+                                else:
+                                    plot_data = plot_data.transpose()
+                            else:
+                                if file_tim and file_tim in plot_data.dims and plot_data.sizes[file_tim] > 1:
+                                    plot_data = plot_data.isel({file_tim: layer_indices[0]})
+
+                            # Apply masking
+                            if enable_mask and mask_value is not None:
+                                plot_data = plot_data.where(plot_data.values > mask_value)
+
+                                # Check if all data is masked
+                                if np.all(np.isnan(plot_data.values)):
+                                    st.error(f"⚠️ All data is masked with threshold {mask_value}. Try adjusting the mask value.")
+                                else:
+                                    valid_pct = 100 * (1 - np.isnan(plot_data.values).sum() / plot_data.values.size)
+                                    st.success(f"✅ {valid_pct:.1f}% of data remains after masking")
+
+                            # Plot
+                            fig, ax = plt.subplots(figsize=(12, 8))
+                            im = plot_data.plot(ax=ax, cmap='cividis', add_colorbar=True)
+
+                            # Title with layer info
+                            title = f'{selected_var}'
+                            if file_tim and file_tim in file_var_data.dims and file_var_data.sizes[file_tim] > 1:
+                                title += f' | Layer: {layer_indices[0]}'
+                            if enable_mask and mask_value is not None:
+                                title += f' | Masked > {mask_value}'
+
+                            ax.set_title(title, fontsize=14)
+                            ax.set_xlabel('')
+                            ax.set_ylabel('')
+                            ax.grid(True, alpha=0.3)
+
+                            plt.tight_layout()
+                            st.pyplot(fig)
+                            plt.close()
+
+                            # PDF export
+                            pdf_bytes_nc = fig_to_pdf_bytes(fig)
+                            st.download_button(
+                                label="📥 Download as PDF",
+                                data=pdf_bytes_nc,
+                                file_name=f"netcdf_{selected_var}_layer{layer_indices[0]}.pdf",
                                 mime="application/pdf",
                                 key="pdf_nc"
                             )
