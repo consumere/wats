@@ -241,48 +241,68 @@ def plot_rolling_statistics(df, window_days, log_scale=False, unit=None):
     return fig
 
 
-def plot_seasonal_decomposition(df, column, unit=None):
-    """Plot yearly patterns using box plots."""
-    data = df[column].dropna()
+def plot_seasonal_decomposition(df, columns, unit=None):
+    """Plot yearly patterns using box plots for multiple columns."""
+    # Limit to 10 columns max
+    if len(columns) > 10:
+        st.warning(f"⚠️ Too many columns ({len(columns)}). Plotting first 10 columns only.")
+        columns = columns[:10]
 
-    # Create year and month columns
-    plot_df = pd.DataFrame({
-        'value': data.values,
-        'month': data.index.month,
-        'year': data.index.year
-    })
+    n_cols = len(columns)
+    if n_cols == 0:
+        return None
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    # Create grid layout: each column gets 1 row with 2 subplots
+    fig, axes = plt.subplots(n_cols, 2, figsize=(14, 5 * n_cols), squeeze=False)
+    fig.suptitle('Seasonal Patterns Analysis', fontsize=16, y=0.995)
 
-    # Monthly boxplot
-    monthly_data = [plot_df[plot_df['month'] == m]['value'].values for m in range(1, 13)]
-    bp1 = axes[0].boxplot(monthly_data, labels=['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                                                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-                           patch_artist=True, showmeans=True)
+    for idx, column in enumerate(columns):
+        data = df[column].dropna()
 
-    for patch in bp1['boxes']:
-        patch.set_facecolor('lightblue')
-        patch.set_alpha(0.7)
+        if len(data) == 0:
+            axes[idx, 0].text(0.5, 0.5, f'No data for {column}',
+                            ha='center', va='center', fontsize=12)
+            axes[idx, 1].text(0.5, 0.5, f'No data for {column}',
+                            ha='center', va='center', fontsize=12)
+            continue
 
-    axes[0].set_xlabel('')  # No x-label (months are clear)
-    if unit:
-        axes[0].set_ylabel(f'{column} [{unit}]', fontsize=11)
-    else:
-        axes[0].set_ylabel(f'{column}', fontsize=11)
-    axes[0].set_title(f'Monthly Distribution', fontsize=12)
-    axes[0].grid(True, alpha=0.3, axis='y')
+        # Create year and month columns
+        plot_df = pd.DataFrame({
+            'value': data.values,
+            'month': data.index.month,
+            'year': data.index.year
+        })
 
-    # Yearly trend
-    yearly_mean = plot_df.groupby('year')['value'].mean()
-    axes[1].plot(yearly_mean.index, yearly_mean.values, marker='o', linewidth=2, markersize=6)
-    axes[1].fill_between(yearly_mean.index, yearly_mean.values, alpha=0.3)
-    axes[1].set_xlabel('')  # No x-label (years are clear)
-    if unit:
-        axes[1].set_ylabel(f'Mean [{unit}]', fontsize=11)
-    else:
-        axes[1].set_ylabel(f'Mean Value', fontsize=11)
-    axes[1].set_title(f'Yearly Trend', fontsize=12)
-    axes[1].grid(True, alpha=0.3)
+        # Monthly boxplot
+        monthly_data = [plot_df[plot_df['month'] == m]['value'].values for m in range(1, 13)]
+        bp1 = axes[idx, 0].boxplot(monthly_data, labels=['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                                                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+                               patch_artist=True, showmeans=True)
+
+        for patch in bp1['boxes']:
+            patch.set_facecolor(f'C{idx}')
+            patch.set_alpha(0.7)
+
+        axes[idx, 0].set_xlabel('')  # No x-label (months are clear)
+        if unit:
+            axes[idx, 0].set_ylabel(f'{column} [{unit}]', fontsize=10)
+        else:
+            axes[idx, 0].set_ylabel(f'{column}', fontsize=10)
+        axes[idx, 0].set_title(f'Monthly Distribution - {column}', fontsize=11)
+        axes[idx, 0].grid(True, alpha=0.3, axis='y')
+
+        # Yearly trend
+        yearly_mean = plot_df.groupby('year')['value'].mean()
+        axes[idx, 1].plot(yearly_mean.index, yearly_mean.values, marker='o',
+                         linewidth=2, markersize=6, color=f'C{idx}')
+        axes[idx, 1].fill_between(yearly_mean.index, yearly_mean.values, alpha=0.3, color=f'C{idx}')
+        axes[idx, 1].set_xlabel('')  # No x-label (years are clear)
+        if unit:
+            axes[idx, 1].set_ylabel(f'Mean [{unit}]', fontsize=10)
+        else:
+            axes[idx, 1].set_ylabel(f'Mean Value', fontsize=10)
+        axes[idx, 1].set_title(f'Yearly Trend - {column}', fontsize=11)
+        axes[idx, 1].grid(True, alpha=0.3)
 
     plt.tight_layout()
     return fig
@@ -642,21 +662,22 @@ if uploaded_files:
 
                 with tab4:
                     st.markdown("### Seasonal Patterns Analysis")
+                    st.markdown("Monthly distribution and yearly trends for all selected columns")
                     if len(selected_columns) > 0:
-                        season_column = st.selectbox("Select column for seasonal analysis", selected_columns)
-                        fig4 = plot_seasonal_decomposition(df, season_column, unit)
-                        st.pyplot(fig4)
-                        plt.close(fig4)
+                        fig4 = plot_seasonal_decomposition(df, selected_columns, unit)
+                        if fig4:
+                            st.pyplot(fig4)
+                            plt.close(fig4)
 
-                        # PDF export button
-                        pdf_bytes4 = fig_to_pdf_bytes(fig4)
-                        st.download_button(
-                            label="📥 Download as PDF",
-                            data=pdf_bytes4,
-                            file_name=f"seasonal_{season_column}.pdf",
-                            mime="application/pdf",
-                            key="pdf_tab4"
-                        )
+                            # PDF export button
+                            pdf_bytes4 = fig_to_pdf_bytes(fig4)
+                            st.download_button(
+                                label="📥 Download as PDF",
+                                data=pdf_bytes4,
+                                file_name=f"seasonal_patterns_all.pdf",
+                                mime="application/pdf",
+                                key="pdf_tab4"
+                            )
                     else:
                         st.warning("Please select at least one column.")
 
@@ -682,16 +703,48 @@ if uploaded_files:
 
                 with tab6:
                     st.markdown("### Model Performance Comparison")
-                    st.markdown("Compare two time series (e.g., modeled vs observed) with statistical metrics")
+                    st.markdown("Compare two time series (simulated vs observed) with statistical metrics")
 
                     if len(selected_columns) >= 2:
+                        # Auto-detect Sim and Obs columns
+                        # Sim: starts with 'C' followed by integer (e.g., C4, C10)
+                        # Obs: anything else (usually labeled as OBS or similar)
+                        import re
+
+                        sim_cols = [c for c in selected_columns if re.match(r'^C\d+', c)]
+                        obs_cols = [c for c in selected_columns if c not in sim_cols]
+
+                        # Set defaults
+                        default_sim = sim_cols[0] if sim_cols else selected_columns[0]
+                        default_obs = obs_cols[0] if obs_cols else (selected_columns[1] if len(selected_columns) > 1 else selected_columns[0])
+
+                        # Get index for defaults
+                        try:
+                            sim_idx = selected_columns.index(default_sim)
+                        except ValueError:
+                            sim_idx = 0
+
                         col_compare1, col_compare2 = st.columns(2)
                         with col_compare1:
-                            compare_col1 = st.selectbox("First variable (e.g., Observed)", selected_columns, key="comp1")
+                            compare_col1 = st.selectbox("First variable (Simulated)",
+                                                       selected_columns,
+                                                       index=sim_idx,
+                                                       key="comp1",
+                                                       help="Should be simulation (e.g., C4, C10)")
                         with col_compare2:
-                            compare_col2 = st.selectbox("Second variable (e.g., Modeled)",
-                                                        [c for c in selected_columns if c != compare_col1],
-                                                        key="comp2")
+                            # Filter out selected sim column
+                            obs_options = [c for c in selected_columns if c != compare_col1]
+                            # Try to default to obs column
+                            try:
+                                obs_idx = obs_options.index(default_obs) if default_obs in obs_options else 0
+                            except (ValueError, IndexError):
+                                obs_idx = 0
+
+                            compare_col2 = st.selectbox("Second variable (Observed)",
+                                                        obs_options,
+                                                        index=obs_idx,
+                                                        key="comp2",
+                                                        help="Should be observation (e.g., OBS)")
 
                         fig6 = plot_model_comparison(df, compare_col1, compare_col2, log_scale, unit)
                         if fig6:
@@ -772,33 +825,72 @@ if uploaded_files:
 
 # ====================== NETCDF TAB ======================
 with main_tab2:
-    st.markdown("### NetCDF Raster Data Viewer")
-    st.markdown("Upload NetCDF (.nc) files for raster visualization and analysis")
+    st.markdown("### NetCDF Raster Data Viewer & Comparison")
+    st.markdown("Upload multiple NetCDF (.nc) files to compare model outputs side-by-side")
 
-    nc_uploaded = st.file_uploader(
-        "Upload NetCDF file",
+    nc_uploaded_files = st.file_uploader(
+        "Upload NetCDF file(s)",
         type=['nc', 'nc4', 'netcdf'],
-        help="Upload a NetCDF file containing raster data",
+        accept_multiple_files=True,
+        help="Upload one or more NetCDF files for visualization and comparison",
         key="nc_upload"
     )
 
-    if nc_uploaded:
+    if nc_uploaded_files:
         temp_dir_nc = "temp_nc"
         os.makedirs(temp_dir_nc, exist_ok=True)
-        nc_path = os.path.join(temp_dir_nc, nc_uploaded.name)
 
         try:
-            with open(nc_path, "wb") as f:
-                f.write(nc_uploaded.getbuffer())
+            # Save all uploaded files
+            nc_paths = []
+            datasets = []
 
-            # Read NetCDF file
-            ds = read_netcdf_file(nc_path)
+            for nc_file in nc_uploaded_files:
+                nc_path = os.path.join(temp_dir_nc, nc_file.name)
+                with open(nc_path, "wb") as f:
+                    f.write(nc_file.getbuffer())
+                nc_paths.append(nc_path)
 
-            if ds is not None:
-                st.success(f"✅ Successfully loaded NetCDF file: {nc_uploaded.name}")
+                # Read NetCDF file
+                ds = read_netcdf_file(nc_path)
+                if ds is not None:
+                    datasets.append({'name': nc_file.name, 'path': nc_path, 'ds': ds})
+
+            if len(datasets) > 0:
+                st.success(f"✅ Successfully loaded {len(datasets)} NetCDF file(s)")
+
+                # Check if dimensions are compatible for stacking
+                if len(datasets) > 1:
+                    st.markdown("---")
+                    st.markdown("#### 📊 Multi-File Comparison")
+
+                    # Check dimension compatibility
+                    first_dims = set(datasets[0]['ds'].dims.keys())
+                    all_compatible = all(set(ds['ds'].dims.keys()) == first_dims for ds in datasets)
+
+                    if all_compatible:
+                        st.success(f"✅ All {len(datasets)} files have compatible dimensions: {list(first_dims)}")
+
+                        # Try to stack datasets
+                        try:
+                            stacked_ds = xr.concat([ds['ds'] for ds in datasets], dim='file')
+                            stacked_ds.coords['file'] = [ds['name'] for ds in datasets]
+                            st.info(f"📚 Files stacked along 'file' dimension")
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not stack datasets: {e}. Will display separately.")
+                            stacked_ds = None
+                    else:
+                        st.warning(f"⚠️ Files have incompatible dimensions. Will display separately.")
+                        dim_info = "\n".join([f"- **{ds['name']}**: {list(ds['ds'].dims.keys())}" for ds in datasets])
+                        st.markdown(dim_info)
+                        stacked_ds = None
+
+                # For simplicity, work with first dataset for metadata display
+                ds = datasets[0]['ds']
 
                 # Display dataset information
-                st.subheader("📋 Dataset Information")
+                st.markdown("---")
+                st.subheader("📋 Dataset Information (First File)")
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Dimensions", len(ds.dims))
@@ -838,12 +930,20 @@ with main_tab2:
                         st.info("No global attributes found")
 
                 # Variable visualization
+                st.markdown("---")
                 st.subheader("🗺️ Variable Visualization")
 
                 # Select variable to plot
                 var_names = list(ds.data_vars.keys())
                 if var_names:
-                    selected_var = st.selectbox("Select variable to visualize", var_names)
+                    selected_var = st.selectbox("Select variable to visualize", var_names,
+                                               help="Select which variable to display from the NetCDF files")
+
+                    # Check if all datasets have this variable
+                    datasets_with_var = [d for d in datasets if selected_var in d['ds'].data_vars]
+
+                    if len(datasets_with_var) < len(datasets):
+                        st.warning(f"⚠️ Variable '{selected_var}' found in {len(datasets_with_var)}/{len(datasets)} files")
 
                     var_data = ds[selected_var]
 
@@ -947,63 +1047,144 @@ with main_tab2:
 
                         # === PLOT ===
                         st.markdown("---")
-                        fig, ax = plt.subplots(figsize=(12, 8))
 
-                        # Use cividis colormap like in fnc.py
-                        im = plot_data.plot(ax=ax, cmap='cividis', add_colorbar=True)
+                        # Create subplot grid for multiple files
+                        n_files = len(datasets_with_var)
+                        if n_files == 0:
+                            st.error(f"No files contain variable '{selected_var}'")
+                        else:
+                            # Calculate subplot grid
+                            n_cols_grid = min(2, n_files)
+                            n_rows_grid = int(np.ceil(n_files / n_cols_grid))
 
-                        # Title with layer info
-                        title = f'{selected_var}'
-                        if tim and tim in var_data.dims and var_data.sizes[tim] > 1:
-                            title += f' | Layer: {time_layer_idx}'
-                        if enable_mask and mask_value is not None:
-                            title += f' | Masked > {mask_value}'
+                            fig, axes = plt.subplots(n_rows_grid, n_cols_grid,
+                                                    figsize=(12 * n_cols_grid, 8 * n_rows_grid),
+                                                    squeeze=False)
+                            fig.suptitle(f'{selected_var} - Multi-File Comparison', fontsize=18, y=0.995)
 
-                        ax.set_title(title, fontsize=14)
-                        ax.set_xlabel('')
-                        ax.set_ylabel('')
-                        ax.grid(True, alpha=0.3)
+                            for idx, ds_info in enumerate(datasets_with_var):
+                                row = idx // n_cols_grid
+                                col = idx % n_cols_grid
+                                ax = axes[row, col]
 
-                        plt.tight_layout()
-                        st.pyplot(fig)
-                        plt.close()
+                                # Process data for this file
+                                file_ds = ds_info['ds']
+                                file_var_data = file_ds[selected_var]
 
-                        # PDF export
-                        pdf_bytes_nc = fig_to_pdf_bytes(fig)
-                        st.download_button(
-                            label="📥 Download as PDF",
-                            data=pdf_bytes_nc,
-                            file_name=f"netcdf_{selected_var}_layer{time_layer_idx}.pdf",
-                            mime="application/pdf",
-                            key="pdf_nc"
-                        )
+                                # Detect coordinates for this file
+                                file_coord_names = list(file_ds.indexes._coord_name_id) if hasattr(file_ds.indexes, '_coord_name_id') else list(file_ds.dims.keys())
+                                file_lng = next((i for i in file_coord_names if i.startswith("lon") or i.endswith("x") or i == "x"), None)
+                                file_lat = next((i for i in file_coord_names if i.startswith("lat") or i.endswith("y") or i == "y"), None)
+                                file_tim = next((i for i in file_coord_names if i.startswith("t") or i == "time" or i == "t"), None)
+
+                                # Check if needs transpose
+                                file_needs_transpose = file_coord_names == ["x", "y", "t"] or (file_lng == "x" and file_lat == "y" and file_tim == "t")
+
+                                # Process data
+                                file_plot_data = file_var_data.copy()
+
+                                # Transpose if WASIM grid
+                                if file_needs_transpose:
+                                    if file_tim and file_tim in file_plot_data.dims:
+                                        file_plot_data = file_plot_data.isel({file_tim: time_layer_idx})
+                                        file_plot_data = file_plot_data.transpose(file_lat, file_lng) if file_lat and file_lng else file_plot_data.transpose()
+                                    else:
+                                        file_plot_data = file_plot_data.transpose()
+                                else:
+                                    # Select time layer if exists
+                                    if file_tim and file_tim in file_plot_data.dims and file_plot_data.sizes[file_tim] > 1:
+                                        file_plot_data = file_plot_data.isel({file_tim: time_layer_idx})
+
+                                # Apply masking
+                                if enable_mask and mask_value is not None:
+                                    file_plot_data = file_plot_data.where(file_plot_data.values > mask_value)
+
+                                # Plot
+                                im = file_plot_data.plot(ax=ax, cmap='cividis', add_colorbar=True)
+
+                                # Title with file name and layer info
+                                title = f'{ds_info["name"]}'
+                                if file_tim and file_tim in file_var_data.dims and file_var_data.sizes[file_tim] > 1:
+                                    title += f'\nLayer: {time_layer_idx}'
+
+                                ax.set_title(title, fontsize=12)
+                                ax.set_xlabel('')
+                                ax.set_ylabel('')
+                                ax.grid(True, alpha=0.3)
+
+                            # Hide empty subplots
+                            for idx in range(n_files, n_rows_grid * n_cols_grid):
+                                row = idx // n_cols_grid
+                                col = idx % n_cols_grid
+                                axes[row, col].axis('off')
+
+                            plt.tight_layout()
+                            st.pyplot(fig)
+                            plt.close()
+
+                            # PDF export
+                            pdf_bytes_nc = fig_to_pdf_bytes(fig)
+                            st.download_button(
+                                label="📥 Download as PDF",
+                                data=pdf_bytes_nc,
+                                file_name=f"netcdf_{selected_var}_comparison_layer{time_layer_idx}.pdf",
+                                mime="application/pdf",
+                                key="pdf_nc"
+                            )
 
                         # === STATISTICS ===
-                        st.subheader("📊 Statistics")
+                        st.markdown("---")
+                        st.subheader("📊 Statistics (First File)")
 
-                        # Calculate quantiles like fnc.py
-                        quantiles = [0, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1]
-                        quant_values = np.nanquantile(plot_data.values, quantiles)
-                        quant_df = pd.DataFrame({
-                            'Quantile': [f'{q:.0%}' for q in quantiles],
-                            'Value': [f'{v:.4f}' for v in quant_values]
-                        })
+                        # Use first file for statistics display
+                        if len(datasets_with_var) > 0:
+                            first_file_ds = datasets_with_var[0]['ds']
+                            first_file_var = first_file_ds[selected_var]
 
-                        col_stats1, col_stats2 = st.columns([1, 1])
-                        with col_stats1:
-                            stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
-                            with stats_col1:
-                                st.metric("Mean", f"{float(np.nanmean(plot_data.values)):.4f}")
-                            with stats_col2:
-                                st.metric("Std Dev", f"{float(np.nanstd(plot_data.values)):.4f}")
-                            with stats_col3:
-                                st.metric("Min", f"{float(np.nanmin(plot_data.values)):.4f}")
-                            with stats_col4:
-                                st.metric("Max", f"{float(np.nanmax(plot_data.values)):.4f}")
+                            # Process data like we did for plotting
+                            first_coord_names = list(first_file_ds.indexes._coord_name_id) if hasattr(first_file_ds.indexes, '_coord_name_id') else list(first_file_ds.dims.keys())
+                            first_lng = next((i for i in first_coord_names if i.startswith("lon") or i.endswith("x") or i == "x"), None)
+                            first_lat = next((i for i in first_coord_names if i.startswith("lat") or i.endswith("y") or i == "y"), None)
+                            first_tim = next((i for i in first_coord_names if i.startswith("t") or i == "time" or i == "t"), None)
+                            first_needs_transpose = first_coord_names == ["x", "y", "t"] or (first_lng == "x" and first_lat == "y" and first_tim == "t")
 
-                        with col_stats2:
-                            st.markdown("**Quantiles:**")
-                            st.dataframe(quant_df, hide_index=True, use_container_width=True)
+                            stats_plot_data = first_file_var.copy()
+                            if first_needs_transpose:
+                                if first_tim and first_tim in stats_plot_data.dims:
+                                    stats_plot_data = stats_plot_data.isel({first_tim: time_layer_idx})
+                                    stats_plot_data = stats_plot_data.transpose(first_lat, first_lng) if first_lat and first_lng else stats_plot_data.transpose()
+                                else:
+                                    stats_plot_data = stats_plot_data.transpose()
+                            else:
+                                if first_tim and first_tim in stats_plot_data.dims and stats_plot_data.sizes[first_tim] > 1:
+                                    stats_plot_data = stats_plot_data.isel({first_tim: time_layer_idx})
+
+                            if enable_mask and mask_value is not None:
+                                stats_plot_data = stats_plot_data.where(stats_plot_data.values > mask_value)
+
+                            # Calculate quantiles like fnc.py
+                            quantiles = [0, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1]
+                            quant_values = np.nanquantile(stats_plot_data.values, quantiles)
+                            quant_df = pd.DataFrame({
+                                'Quantile': [f'{q:.0%}' for q in quantiles],
+                                'Value': [f'{v:.4f}' for v in quant_values]
+                            })
+
+                            col_stats1, col_stats2 = st.columns([1, 1])
+                            with col_stats1:
+                                stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
+                                with stats_col1:
+                                    st.metric("Mean", f"{float(np.nanmean(stats_plot_data.values)):.4f}")
+                                with stats_col2:
+                                    st.metric("Std Dev", f"{float(np.nanstd(stats_plot_data.values)):.4f}")
+                                with stats_col3:
+                                    st.metric("Min", f"{float(np.nanmin(stats_plot_data.values)):.4f}")
+                                with stats_col4:
+                                    st.metric("Max", f"{float(np.nanmax(stats_plot_data.values)):.4f}")
+
+                            with col_stats2:
+                                st.markdown("**Quantiles:**")
+                                st.dataframe(quant_df, hide_index=True, use_container_width=True)
 
                     else:
                         st.warning("Variable needs at least 2 dimensions for visualization")
@@ -1025,16 +1206,17 @@ with main_tab2:
                     st.warning("No variables found in NetCDF file")
 
         except Exception as e:
-            st.error(f"❌ Error processing NetCDF file: {str(e)}")
+            st.error(f"❌ Error processing NetCDF file(s): {str(e)}")
             import traceback
             st.code(traceback.format_exc())
 
         finally:
-            # Clean up
-            if os.path.exists(nc_path):
-                os.remove(nc_path)
+            # Clean up all temporary files
+            for nc_path in nc_paths:
+                if os.path.exists(nc_path):
+                    os.remove(nc_path)
             if os.path.exists(temp_dir_nc):
                 try:
                     os.rmdir(temp_dir_nc)
                 except OSError:
-                    pass
+                    pass  # Directory not empty, that's ok
