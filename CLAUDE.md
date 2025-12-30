@@ -94,19 +94,31 @@ pip install streamlit pandas matplotlib seaborn numpy
   - Returns pandas DataFrame with datetime index
   - **Accepts any file format** (no extension restriction)
 
-### Key Features (v2.0)
+### Key Features (v3.0)
 
 **Multiple File Support:**
 - Upload and merge multiple files simultaneously
 - Automatic concatenation along date index (outer join)
 - Duplicate column names handled with numeric suffixes
 
-**Interactive Visualizations (5 types in tabs):**
+**Interactive Visualizations (7 types in tabs):**
 1. **Time Series**: Raw data plots with log scale option
 2. **Aggregated Stats**: Mean/Min/Max/StdDev bands over time (Daily/Weekly/Monthly/Yearly)
 3. **Rolling Statistics**: Configurable rolling window (7-365 days) with mean and std bands
 4. **Seasonal Patterns**: Monthly boxplots and yearly trend analysis
 5. **Correlations**: Heatmap of column correlations
+6. **Model Performance**: Compare two time series with R², NSE, KGE metrics
+7. **Multi-Overview**: 2-column subplot grid for comparing multiple variables
+
+**NetCDF Raster Viewer:**
+- Upload and visualize NetCDF (.nc) files
+- Auto-detect and transpose WASIM grids (x, y, t coordinates)
+- Time layer selection with slider for multi-temporal datasets
+- Interactive value masking (default: -9999 for NoData)
+- Cividis colormap for better perceptual uniformity
+- Quantile statistics display (0%, 5%, 10%, 25%, 50%, 75%, 90%, 95%, 100%)
+- PDF and CSV export functionality
+- Variable attribute display
 
 **Professional Plotting Features:**
 - **LaTeX-style fonts**: Computer Modern (serif) font family for publication-quality plots

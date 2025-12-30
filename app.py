@@ -852,33 +852,117 @@ with main_tab2:
                     st.markdown(f"**Dimensions:** {var_data.dims}")
                     st.markdown(f"**Shape:** {var_data.shape}")
 
+                    # Display variable attributes if available
+                    if var_data.attrs:
+                        with st.expander("📝 Variable Attributes"):
+                            attr_text = "\n".join([f"**{k}**: {v}" for k, v in var_data.attrs.items()])
+                            st.markdown(attr_text)
+
                     # Create visualization based on dimensions
                     if len(var_data.dims) >= 2:
-                        # For multi-dimensional data, allow slicing
-                        slice_controls = {}
+                        # === COORDINATE DETECTION (like fnc.py) ===
+                        # Detect coordinate names
+                        coord_names = list(ds.indexes._coord_name_id) if hasattr(ds.indexes, '_coord_name_id') else list(ds.dims.keys())
 
-                        for dim in var_data.dims[:-2]:  # Skip last 2 dims (usually spatial)
-                            dim_size = var_data.sizes[dim]
-                            if dim_size > 1:
-                                slice_controls[dim] = st.slider(
-                                    f"Select {dim} index",
-                                    0, dim_size - 1, 0,
-                                    key=f"slice_{dim}"
+                        # Find longitude, latitude, time coordinates
+                        lng = next((i for i in coord_names if i.startswith("lon") or i.endswith("x") or i == "x"), None)
+                        lat = next((i for i in coord_names if i.startswith("lat") or i.endswith("y") or i == "y"), None)
+                        tim = next((i for i in coord_names if i.startswith("t") or i == "time" or i == "t"), None)
+
+                        st.markdown(f"**Detected coordinates:** x={lng}, y={lat}, time={tim}")
+
+                        # === TRANSPOSE FOR WASIM GRIDS (like fnc.py line 34-43) ===
+                        needs_transpose = False
+                        if coord_names == ["x", "y", "t"] or (lng == "x" and lat == "y" and tim == "t"):
+                            st.info("🔄 Detected WASIM grid format - will transpose for correct orientation")
+                            needs_transpose = True
+
+                        # === MASKING CONTROLS ===
+                        st.markdown("---")
+                        st.markdown("#### 🎛️ Data Filtering Controls")
+
+                        col_mask1, col_mask2 = st.columns(2)
+                        with col_mask1:
+                            # Mask value slider (default -9999 like in time series)
+                            enable_mask = st.checkbox("Enable value masking", value=True,
+                                                     help="Filter out NoData values (e.g., -9999)")
+                        with col_mask2:
+                            if enable_mask:
+                                # Get data range for slider
+                                data_min = float(var_data.min().values)
+                                data_max = float(var_data.max().values)
+
+                                # Default mask value
+                                default_mask = -9999.0 if data_min <= -9999.0 else data_min
+
+                                mask_value = st.number_input(
+                                    "Mask threshold (show values > threshold)",
+                                    value=default_mask,
+                                    format="%.2f",
+                                    help="Values less than or equal to this will be masked (e.g., -9999 for NoData)"
                                 )
+                            else:
+                                mask_value = None
 
-                        # Extract 2D slice
-                        plot_data = var_data
-                        for dim, idx in slice_controls.items():
-                            plot_data = plot_data.isel({dim: idx})
+                        # === TIME LAYER SELECTION ===
+                        time_layer_idx = 0
+                        if tim and tim in var_data.dims:
+                            time_size = var_data.sizes[tim]
+                            if time_size > 1:
+                                st.markdown("---")
+                                st.markdown("#### ⏱️ Time Layer Selection")
+                                time_layer_idx = st.slider(
+                                    f"Select time layer (dimension: {tim})",
+                                    0, time_size - 1, 0,
+                                    help=f"Select which time step to visualize (0-{time_size-1})"
+                                )
+                                st.markdown(f"**Selected layer:** {time_layer_idx} of {time_size}")
 
-                        # Plot
+                        # === PROCESS DATA ===
+                        plot_data = var_data.copy()
+
+                        # Transpose if WASIM grid
+                        if needs_transpose:
+                            if tim and tim in plot_data.dims:
+                                # Select time layer first, then transpose
+                                plot_data = plot_data.isel({tim: time_layer_idx})
+                                plot_data = plot_data.transpose(lat, lng) if lat and lng else plot_data.transpose()
+                            else:
+                                plot_data = plot_data.transpose()
+                        else:
+                            # Select time layer if exists
+                            if tim and tim in plot_data.dims and plot_data.sizes[tim] > 1:
+                                plot_data = plot_data.isel({tim: time_layer_idx})
+
+                        # Apply masking (like fnc.py line 45)
+                        if enable_mask and mask_value is not None:
+                            plot_data = plot_data.where(plot_data.values > mask_value)
+
+                            # Check if all data is masked
+                            if np.all(np.isnan(plot_data.values)):
+                                st.error(f"⚠️ All data is masked with threshold {mask_value}. Try adjusting the mask value.")
+                            else:
+                                valid_pct = 100 * (1 - np.isnan(plot_data.values).sum() / plot_data.values.size)
+                                st.success(f"✅ {valid_pct:.1f}% of data remains after masking")
+
+                        # === PLOT ===
+                        st.markdown("---")
                         fig, ax = plt.subplots(figsize=(12, 8))
 
-                        im = plot_data.plot(ax=ax, cmap='viridis', add_colorbar=True)
+                        # Use cividis colormap like in fnc.py
+                        im = plot_data.plot(ax=ax, cmap='cividis', add_colorbar=True)
 
-                        ax.set_title(f'{selected_var}', fontsize=14)
+                        # Title with layer info
+                        title = f'{selected_var}'
+                        if tim and tim in var_data.dims and var_data.sizes[tim] > 1:
+                            title += f' | Layer: {time_layer_idx}'
+                        if enable_mask and mask_value is not None:
+                            title += f' | Masked > {mask_value}'
+
+                        ax.set_title(title, fontsize=14)
                         ax.set_xlabel('')
                         ax.set_ylabel('')
+                        ax.grid(True, alpha=0.3)
 
                         plt.tight_layout()
                         st.pyplot(fig)
@@ -889,22 +973,37 @@ with main_tab2:
                         st.download_button(
                             label="📥 Download as PDF",
                             data=pdf_bytes_nc,
-                            file_name=f"netcdf_{selected_var}.pdf",
+                            file_name=f"netcdf_{selected_var}_layer{time_layer_idx}.pdf",
                             mime="application/pdf",
                             key="pdf_nc"
                         )
 
-                        # Show statistics
+                        # === STATISTICS ===
                         st.subheader("📊 Statistics")
-                        stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
-                        with stats_col1:
-                            st.metric("Mean", f"{float(plot_data.mean().values):.4f}")
-                        with stats_col2:
-                            st.metric("Std Dev", f"{float(plot_data.std().values):.4f}")
-                        with stats_col3:
-                            st.metric("Min", f"{float(plot_data.min().values):.4f}")
-                        with stats_col4:
-                            st.metric("Max", f"{float(plot_data.max().values):.4f}")
+
+                        # Calculate quantiles like fnc.py
+                        quantiles = [0, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1]
+                        quant_values = np.nanquantile(plot_data.values, quantiles)
+                        quant_df = pd.DataFrame({
+                            'Quantile': [f'{q:.0%}' for q in quantiles],
+                            'Value': [f'{v:.4f}' for v in quant_values]
+                        })
+
+                        col_stats1, col_stats2 = st.columns([1, 1])
+                        with col_stats1:
+                            stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
+                            with stats_col1:
+                                st.metric("Mean", f"{float(np.nanmean(plot_data.values)):.4f}")
+                            with stats_col2:
+                                st.metric("Std Dev", f"{float(np.nanstd(plot_data.values)):.4f}")
+                            with stats_col3:
+                                st.metric("Min", f"{float(np.nanmin(plot_data.values)):.4f}")
+                            with stats_col4:
+                                st.metric("Max", f"{float(np.nanmax(plot_data.values)):.4f}")
+
+                        with col_stats2:
+                            st.markdown("**Quantiles:**")
+                            st.dataframe(quant_df, hide_index=True, use_container_width=True)
 
                     else:
                         st.warning("Variable needs at least 2 dimensions for visualization")
