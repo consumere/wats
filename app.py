@@ -859,7 +859,7 @@ with main_tab2:
             if len(datasets) > 0:
                 st.success(f"✅ Successfully loaded {len(datasets)} NetCDF file(s)")
 
-                # Check if dimensions are compatible for stacking
+                # Check if dimensions are compatible when multiple files
                 if len(datasets) > 1:
                     st.markdown("---")
                     st.markdown("#### 📊 Multi-File Comparison")
@@ -870,20 +870,12 @@ with main_tab2:
 
                     if all_compatible:
                         st.success(f"✅ All {len(datasets)} files have compatible dimensions: {list(first_dims)}")
-
-                        # Try to stack datasets
-                        try:
-                            stacked_ds = xr.concat([ds['ds'] for ds in datasets], dim='file')
-                            stacked_ds.coords['file'] = [ds['name'] for ds in datasets]
-                            st.info(f"📚 Files stacked along 'file' dimension")
-                        except Exception as e:
-                            st.warning(f"⚠️ Could not stack datasets: {e}. Will display separately.")
-                            stacked_ds = None
+                        st.info(f"📊 Will display {len(datasets)} files side-by-side in subplot grid")
                     else:
-                        st.warning(f"⚠️ Files have incompatible dimensions. Will display separately.")
+                        st.warning(f"⚠️ Files have incompatible dimensions.")
                         dim_info = "\n".join([f"- **{ds['name']}**: {list(ds['ds'].dims.keys())}" for ds in datasets])
                         st.markdown(dim_info)
-                        stacked_ds = None
+                        st.info("Will display files with matching variables")
 
                 # For simplicity, work with first dataset for metadata display
                 ds = datasets[0]['ds']
@@ -1008,6 +1000,7 @@ with main_tab2:
                         time_layer_idx = 0
                         show_multi_layers = False
                         layer_indices = [0]
+                        n_files = len(datasets_with_var)
 
                         if tim and tim in var_data.dims:
                             time_size = var_data.sizes[tim]
@@ -1015,71 +1008,83 @@ with main_tab2:
                                 st.markdown("---")
                                 st.markdown("#### ⏱️ Time Layer Selection")
 
-                                # Option to show single or multiple layers
-                                display_mode = st.radio(
-                                    "Display mode",
-                                    ["Single layer", "Multiple layers (subplots)"],
-                                    horizontal=True,
-                                    help="Choose to display one layer or multiple layers side-by-side"
-                                )
+                                # Different UI for single file vs multiple files
+                                if n_files == 1:
+                                    # SINGLE FILE: Option to show one layer or multiple layers as subplots
+                                    display_mode = st.radio(
+                                        "Display mode",
+                                        ["Single layer", "Multiple layers (subplots)"],
+                                        horizontal=True,
+                                        help="Choose to display one layer or multiple layers side-by-side"
+                                    )
 
-                                if display_mode == "Single layer":
+                                    if display_mode == "Single layer":
+                                        time_layer_idx = st.slider(
+                                            f"Select time layer (dimension: {tim})",
+                                            0, time_size - 1, 0,
+                                            help=f"Select which time step to visualize (0-{time_size-1})"
+                                        )
+                                        st.markdown(f"**Selected layer:** {time_layer_idx} of {time_size}")
+                                        layer_indices = [time_layer_idx]
+                                    else:
+                                        # Multi-layer subplot mode (for single file)
+                                        show_multi_layers = True
+
+                                        # Limit to 8 layers
+                                        max_layers = min(8, time_size)
+                                        if time_size > 8:
+                                            st.warning(f"⚠️ File has {time_size} time layers. Limiting to first 8 for visualization.")
+
+                                        # Let user select how many layers to show
+                                        n_layers = st.slider(
+                                            "Number of layers to display",
+                                            1, max_layers, min(4, max_layers),
+                                            help=f"Select how many time layers to show (max 8)"
+                                        )
+
+                                        # Let user select which layers
+                                        st.markdown(f"**Select {n_layers} layers to display:**")
+                                        col_select1, col_select2 = st.columns(2)
+
+                                        with col_select1:
+                                            start_layer = st.number_input(
+                                                "Start layer",
+                                                min_value=0,
+                                                max_value=max(0, time_size - n_layers),
+                                                value=0,
+                                                help="Starting layer index"
+                                            )
+
+                                        with col_select2:
+                                            layer_step = st.number_input(
+                                                "Layer step",
+                                                min_value=1,
+                                                max_value=max(1, time_size // n_layers),
+                                                value=1,
+                                                help="Step between layers (1=consecutive, 2=every other, etc.)"
+                                            )
+
+                                        # Calculate layer indices
+                                        layer_indices = [start_layer + i * layer_step for i in range(n_layers)]
+                                        layer_indices = [idx for idx in layer_indices if idx < time_size]
+
+                                        st.info(f"📊 Will display layers: {layer_indices}")
+                                else:
+                                    # MULTIPLE FILES: Just choose which layer to display for all files
                                     time_layer_idx = st.slider(
-                                        f"Select time layer (dimension: {tim})",
+                                        f"Select time layer for all files (dimension: {tim})",
                                         0, time_size - 1, 0,
-                                        help=f"Select which time step to visualize (0-{time_size-1})"
+                                        help=f"All {n_files} files will show this layer (0-{time_size-1})"
                                     )
                                     st.markdown(f"**Selected layer:** {time_layer_idx} of {time_size}")
+                                    st.info(f"📊 Will display layer {time_layer_idx} from {n_files} files side-by-side")
                                     layer_indices = [time_layer_idx]
-                                else:
-                                    # Multi-layer subplot mode
-                                    show_multi_layers = True
-
-                                    # Limit to 8 layers
-                                    max_layers = min(8, time_size)
-                                    if time_size > 8:
-                                        st.warning(f"⚠️ File has {time_size} time layers. Limiting to first 8 for visualization.")
-
-                                    # Let user select how many layers to show
-                                    n_layers = st.slider(
-                                        "Number of layers to display",
-                                        1, max_layers, min(4, max_layers),
-                                        help=f"Select how many time layers to show (max 8)"
-                                    )
-
-                                    # Let user select which layers
-                                    st.markdown(f"**Select {n_layers} layers to display:**")
-                                    col_select1, col_select2 = st.columns(2)
-
-                                    with col_select1:
-                                        start_layer = st.number_input(
-                                            "Start layer",
-                                            min_value=0,
-                                            max_value=max(0, time_size - n_layers),
-                                            value=0,
-                                            help="Starting layer index"
-                                        )
-
-                                    with col_select2:
-                                        layer_step = st.number_input(
-                                            "Layer step",
-                                            min_value=1,
-                                            max_value=max(1, time_size // n_layers),
-                                            value=1,
-                                            help="Step between layers (1=consecutive, 2=every other, etc.)"
-                                        )
-
-                                    # Calculate layer indices
-                                    layer_indices = [start_layer + i * layer_step for i in range(n_layers)]
-                                    layer_indices = [idx for idx in layer_indices if idx < time_size]
-
-                                    st.info(f"📊 Will display layers: {layer_indices}")
 
                         # === PLOT ===
                         st.markdown("---")
 
                         # Determine what to plot: multi-layer subplots OR multi-file subplots OR single plot
-                        n_files = len(datasets_with_var)
+                        # n_files already calculated above
 
                         if n_files == 0:
                             st.error(f"No files contain variable '{selected_var}'")
