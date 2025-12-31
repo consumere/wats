@@ -32,10 +32,15 @@ def read_data_file(file_path):
 
     Auto-detects and skips metadata rows (rows containing non-numeric year values).
     Handles both whitespace and tab-separated files.
-    Returns DataFrame and metadata dictionary with units.
+    Returns DataFrame and metadata dictionary with units and parameter description.
     """
     with open(file_path, 'r', encoding='cp1252') as f:
         lines = f.readlines()
+
+    # Extract filename without extension for potential use
+    import os
+    filename = os.path.basename(file_path)
+    filename_noext = os.path.splitext(filename)[0]
 
     # Detect separator (tab or whitespace)
     first_line = lines[0]
@@ -46,11 +51,17 @@ def read_data_file(file_path):
 
     # Extract metadata for units/descriptions
     metadata = {}
+    metadata['filename'] = filename
+    metadata['filename_noext'] = filename_noext
+
     if len(lines) > 1:
-        # Check second line for unit information
+        # Check second line for parameter description
         second_line = lines[1].strip()
         if second_line and not second_line[0].isdigit():
+            # Store the full parameter description
+            metadata['parameter'] = second_line
             metadata['description'] = second_line
+
             # Try to extract units from description
             if '_in_mm' in second_line.lower():
                 metadata['unit'] = 'mm'
@@ -113,18 +124,63 @@ def read_data_file(file_path):
 
 
 def concatenate_dataframes(df_list):
-    """Concatenate multiple dataframes and handle overlapping columns."""
+    """Concatenate multiple dataframes with intelligent column naming.
+
+    Uses parameter descriptions from line 2 of files, or filenames if not available.
+    This helps users identify which columns came from which files.
+    """
     if len(df_list) == 1:
         return df_list[0]
 
-    # Concatenate along columns (join on date index)
-    combined_df = pd.concat(df_list, axis=1, join='outer')
+    # Build new column names based on metadata
+    renamed_df_list = []
 
-    # Handle duplicate column names by adding numeric suffix
+    for df in df_list:
+        # Get metadata from dataframe attributes
+        metadata = df.attrs.get('metadata', {})
+
+        # Determine the prefix to use for columns
+        # Priority: parameter description > filename without extension > filename
+        if 'parameter' in metadata and metadata['parameter']:
+            prefix = metadata['parameter']
+        elif 'filename_noext' in metadata and metadata['filename_noext']:
+            prefix = metadata['filename_noext']
+        elif 'filename' in metadata and metadata['filename']:
+            prefix = metadata['filename']
+        else:
+            prefix = None
+
+        # Rename columns if we have a prefix and multiple columns
+        if prefix and len(df.columns) > 0:
+            # Create new column names
+            new_columns = []
+            for col in df.columns:
+                # If the column already contains descriptive info, keep it
+                # Otherwise, prepend the prefix
+                if len(df.columns) == 1:
+                    # Single column - use prefix as the main name
+                    new_columns.append(prefix)
+                else:
+                    # Multiple columns - combine prefix with column name
+                    new_columns.append(f"{prefix}_{col}")
+
+            df_renamed = df.copy()
+            df_renamed.columns = new_columns
+            # Preserve metadata
+            df_renamed.attrs = df.attrs
+            renamed_df_list.append(df_renamed)
+        else:
+            renamed_df_list.append(df)
+
+    # Concatenate along columns (join on date index)
+    combined_df = pd.concat(renamed_df_list, axis=1, join='outer')
+
+    # Handle any remaining duplicate column names by adding numeric suffix
     cols = pd.Series(combined_df.columns)
     for dup in cols[cols.duplicated()].unique():
-        cols[cols[cols == dup].index.values.tolist()] = [dup + '_' + str(i) if i != 0 else dup
-                                                           for i in range(sum(cols == dup))]
+        dup_indices = cols[cols == dup].index.values.tolist()
+        cols[dup_indices] = [f"{dup}_{i+1}" if i > 0 else dup
+                             for i in range(len(dup_indices))]
     combined_df.columns = cols
 
     return combined_df.sort_index()
