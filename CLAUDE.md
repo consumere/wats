@@ -40,10 +40,13 @@ The application is a single-file Streamlit app (~1450 lines) with modular compon
 
 2. **Data Processing**:
    - `concatenate_dataframes(df_list)`: Merges multiple files along date index with intelligent column naming
-   - Uses parameter descriptions from line 2 of files as column names (priority: parameter description > filename without extension > filename)
+   - **Column naming strategy**:
+     - Single-column files: Uses parameter description from line 2 (e.g., "precipitation_in_mm")
+     - Multi-column files: Uses filename without extension as prefix (e.g., "windsinn100.fut_2", "windsinn100.fut_tot_average")
+     - This avoids overly long column names while maintaining clear file-to-column mapping
    - Handles duplicate column names by adding numeric suffixes only when necessary
    - Outer join preserves all data from all files
-   - Helps users identify which columns came from which files when multiple files are uploaded
+   - Debug expander shows column mapping with metadata from each file
 
 3. **Visualization Functions** (7 types for time series + NetCDF viewer):
    - `plot_timeseries(df, log_scale, title, unit)`: Raw time series plots
@@ -127,8 +130,10 @@ pip install -r requirements.txt
 **Multiple File Support:**
 - Upload and merge multiple files simultaneously
 - Automatic concatenation along date index (outer join)
-- **Intelligent column naming**: Uses parameter descriptions from line 2 of each file, or filename if not available
-- Column names clearly indicate which file/parameter they came from (e.g., "precipitation_in_mm", "evaporation_layer1")
+- **Intelligent column naming**:
+  - Single-column files: Uses parameter description from line 2 (e.g., "precipitation_in_mm")
+  - Multi-column files: Uses filename as prefix (e.g., "windsinn100.fut_2", "windsinn100.fut_tot_average")
+  - Expandable debug panel shows file-to-column mapping with all metadata
 - Duplicate column names handled with numeric suffixes only when necessary
 
 **Interactive Visualizations (7 types in tabs):**
@@ -165,7 +170,9 @@ pip install -r requirements.txt
 
 **UI Enhancements:**
 - Wide layout for better visualization
+- **Optimized workflow**: Visualizations displayed first, followed by statistics and downloads
 - Tabbed interface for different analysis types
+- Collapsible column mapping panel (shows file-to-column relationships)
 - Collapsible raw data preview
 - Loading spinners and status messages
 - Clean, modern design with seaborn styling

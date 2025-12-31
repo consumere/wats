@@ -140,28 +140,41 @@ def concatenate_dataframes(df_list):
         metadata = df.attrs.get('metadata', {})
 
         # Determine the prefix to use for columns
-        # Priority: parameter description > filename without extension > filename
-        if 'parameter' in metadata and metadata['parameter']:
-            prefix = metadata['parameter']
-        elif 'filename_noext' in metadata and metadata['filename_noext']:
-            prefix = metadata['filename_noext']
-        elif 'filename' in metadata and metadata['filename']:
-            prefix = metadata['filename']
+        # Strategy:
+        # - Single column files: use parameter description (from line 2)
+        # - Multi-column files: use filename (to avoid very long column names)
+        if len(df.columns) == 1:
+            # Single column - prefer parameter description
+            if 'parameter' in metadata and metadata['parameter']:
+                prefix = metadata['parameter']
+            elif 'filename_noext' in metadata and metadata['filename_noext']:
+                prefix = metadata['filename_noext']
+            elif 'filename' in metadata and metadata['filename']:
+                prefix = metadata['filename']
+            else:
+                prefix = None
         else:
-            prefix = None
+            # Multiple columns - prefer filename to keep column names shorter
+            if 'filename_noext' in metadata and metadata['filename_noext']:
+                prefix = metadata['filename_noext']
+            elif 'filename' in metadata and metadata['filename']:
+                prefix = metadata['filename']
+            elif 'parameter' in metadata and metadata['parameter']:
+                # Fallback to parameter if no filename
+                prefix = metadata['parameter']
+            else:
+                prefix = None
 
-        # Rename columns if we have a prefix and multiple columns
+        # Rename columns if we have a prefix
         if prefix and len(df.columns) > 0:
             # Create new column names
             new_columns = []
             for col in df.columns:
-                # If the column already contains descriptive info, keep it
-                # Otherwise, prepend the prefix
                 if len(df.columns) == 1:
-                    # Single column - use prefix as the main name
+                    # Single column - use prefix directly
                     new_columns.append(prefix)
                 else:
-                    # Multiple columns - combine prefix with column name
+                    # Multiple columns - combine prefix with original column name
                     new_columns.append(f"{prefix}_{col}")
 
             df_renamed = df.copy()
@@ -582,42 +595,24 @@ if uploaded_files:
 
         st.success(f"✅ Successfully loaded {len(uploaded_files)} file(s): {', '.join(file_names)}")
 
+        # Debug: Show column names and metadata
+        with st.expander("🔍 Column Information & File Mapping", expanded=True):
+            st.markdown("**Columns created from uploaded files:**")
+            col_info = []
+            for i, temp_df in enumerate(df_list):
+                metadata = temp_df.attrs.get('metadata', {})
+                orig_cols = list(temp_df.columns)
+                param = metadata.get('parameter', 'N/A')
+                fname = metadata.get('filename', file_names[i])
+                col_info.append({
+                    'File': fname,
+                    'Parameter (Line 2)': param,
+                    'Original Columns': ', '.join(orig_cols)
+                })
+            st.table(pd.DataFrame(col_info))
+            st.markdown(f"**Final merged columns:** {', '.join(df.columns.tolist())}")
+
         if df is not None and not df.empty:
-            # Data statistics
-            st.subheader("📈 Data Summary")
-            col1, col2, col3, col4, col5 = st.columns(5)
-            with col1:
-                st.metric("Files Loaded", len(uploaded_files))
-            with col2:
-                st.metric("Records", f"{len(df):,}")
-            with col3:
-                st.metric("Start Date", f"{df.index.min().date()}")
-            with col4:
-                st.metric("End Date", f"{df.index.max().date()}")
-            with col5:
-                years = (df.index.max() - df.index.min()).days / 365.25
-                st.metric("Duration", f"{years:.1f} years")
-
-            # Column statistics
-            st.subheader("📊 Column Statistics")
-            stats_df = df.describe().T
-            stats_df['missing_pct'] = (df.isna().sum() / len(df) * 100).values
-            stats_df = stats_df[['count', 'mean', 'std', 'min', 'max', 'missing_pct']]
-            stats_df.columns = ['Count', 'Mean', 'Std Dev', 'Min', 'Max', 'Missing %']
-            st.dataframe(stats_df.style.format({
-                'Mean': '{:.3f}',
-                'Std Dev': '{:.3f}',
-                'Min': '{:.3f}',
-                'Max': '{:.3f}',
-                'Missing %': '{:.1f}%'
-            }), use_container_width=True)
-
-            # Display raw data
-            with st.expander("🔍 View Raw Data Preview (first 100 rows)", expanded=False):
-                st.dataframe(df.head(100), use_container_width=True)
-
-            st.markdown("---")
-
             # Column selector
             st.subheader("📈 Visualization Options")
             all_columns = df.columns.tolist()
@@ -838,6 +833,40 @@ if uploaded_files:
                                 mime="application/pdf",
                                 key="pdf_tab7"
                             )
+
+                # Stats sections - moved after visualizations
+                st.markdown("---")
+                st.subheader("📈 Data Summary")
+                col1, col2, col3, col4, col5 = st.columns(5)
+                with col1:
+                    st.metric("Files Loaded", len(uploaded_files))
+                with col2:
+                    st.metric("Records", f"{len(df):,}")
+                with col3:
+                    st.metric("Start Date", f"{df.index.min().date()}")
+                with col4:
+                    st.metric("End Date", f"{df.index.max().date()}")
+                with col5:
+                    years = (df.index.max() - df.index.min()).days / 365.25
+                    st.metric("Duration", f"{years:.1f} years")
+
+                # Column statistics
+                st.subheader("📊 Column Statistics")
+                stats_df = df.describe().T
+                stats_df['missing_pct'] = (df.isna().sum() / len(df) * 100).values
+                stats_df = stats_df[['count', 'mean', 'std', 'min', 'max', 'missing_pct']]
+                stats_df.columns = ['Count', 'Mean', 'Std Dev', 'Min', 'Max', 'Missing %']
+                st.dataframe(stats_df.style.format({
+                    'Mean': '{:.3f}',
+                    'Std Dev': '{:.3f}',
+                    'Min': '{:.3f}',
+                    'Max': '{:.3f}',
+                    'Missing %': '{:.1f}%'
+                }), use_container_width=True)
+
+                # Display raw data
+                with st.expander("🔍 View Raw Data Preview (first 100 rows)", expanded=False):
+                    st.dataframe(df.head(100), use_container_width=True)
 
                 # Download section
                 st.markdown("---")
@@ -1413,7 +1442,25 @@ with main_tab2:
                                 key="pdf_nc"
                             )
 
-                        # === STATISTICS ===
+                        # Export to CSV
+                        st.markdown("---")
+                        st.subheader("💾 Export Data")
+                        if st.button("Convert to CSV"):
+                            # Convert to pandas dataframe
+                            df_nc = var_data.to_dataframe().reset_index()
+                            csv_data = df_nc.to_csv(index=False)
+
+                            # Use variable name from first file
+                            export_var_name = datasets_with_var[0]['var'] if len(datasets_with_var) > 0 else "data"
+
+                            st.download_button(
+                                label="📥 Download CSV",
+                                data=csv_data,
+                                file_name=f"{export_var_name}.csv",
+                                mime="text/csv"
+                            )
+
+                        # === STATISTICS === (moved after visualization)
                         st.markdown("---")
                         st.subheader("📊 Statistics (First File)")
 
@@ -1470,23 +1517,6 @@ with main_tab2:
 
                         else:
                             st.warning("No datasets available for statistics")
-
-                        # Export to CSV
-                        st.subheader("💾 Export Data")
-                        if st.button("Convert to CSV"):
-                            # Convert to pandas dataframe
-                            df_nc = var_data.to_dataframe().reset_index()
-                            csv_data = df_nc.to_csv(index=False)
-
-                            # Use variable name from first file
-                            export_var_name = datasets_with_var[0]['var'] if len(datasets_with_var) > 0 else "data"
-
-                            st.download_button(
-                                label="📥 Download CSV",
-                                data=csv_data,
-                                file_name=f"{export_var_name}.csv",
-                                mime="text/csv"
-                            )
 
                 else:
                     st.warning("Variable needs at least 2 dimensions for visualization")
