@@ -39,6 +39,7 @@ def read_data_file(file_path):
 
     # Extract filename without extension for potential use
     import os
+    import re
     filename = os.path.basename(file_path)
     filename_noext = os.path.splitext(filename)[0]
 
@@ -54,24 +55,51 @@ def read_data_file(file_path):
     metadata['filename'] = filename
     metadata['filename_noext'] = filename_noext
 
+    # Extract model setup and run ID if present (e.g., sinn100.d0, sinn100.z1, sinn100.A2)
+    # Pattern matches specific model names like "sinn100", "brend100" and run IDs like "d0", "z1", "A2"
+    # Case-insensitive matching for run IDs
+    model_match = re.search(r'(sinn\d+|brend\d+)', filename, re.IGNORECASE)
+    run_match = re.search(r'\.([a-z]\d+)', filename, re.IGNORECASE)
+
+    if model_match and run_match:
+        metadata['model_setup'] = model_match.group(1)
+        metadata['run_id'] = run_match.group(1)
+        # Create shorter prefix combining model and run
+        metadata['model_run_prefix'] = f"{model_match.group(1)}_{run_match.group(1)}"
+
+    # Extract parameter description from line 2 (index 1)
+    # Line 2 typically contains parameter description or metadata
     if len(lines) > 1:
-        # Check second line for parameter description
         second_line = lines[1].strip()
-        if second_line and not second_line[0].isdigit():
-            # Store the full parameter description
-            metadata['parameter'] = second_line
-            metadata['description'] = second_line
+        # Clean up the line (remove YY MM DD HH prefix if present)
+        second_line_cleaned = second_line
+        if second_line.startswith('YY'):
+            # Remove "YY MM DD HH" prefix common in metadata rows
+            parts = second_line.split(None, 4)  # Split on whitespace, max 5 parts
+            if len(parts) > 4:
+                second_line_cleaned = parts[4]  # Get everything after YY MM DD HH
+        elif '\t' in second_line:
+            # Tab-separated, take part after first 4 tabs
+            parts = second_line.split('\t', 4)
+            if len(parts) > 4:
+                second_line_cleaned = parts[4]
+
+        # Store if it looks like a description (not empty, not all numbers/dashes)
+        if second_line_cleaned and second_line_cleaned != '--' and not second_line_cleaned.replace('.', '').replace('-', '').isdigit():
+            metadata['parameter'] = second_line_cleaned.strip()
+            metadata['description'] = second_line_cleaned.strip()
 
             # Try to extract units from description
-            if '_in_mm' in second_line.lower():
+            desc_lower = second_line_cleaned.lower()
+            if '_in_mm' in desc_lower or '[mm' in desc_lower:
                 metadata['unit'] = 'mm'
-            elif '_in_m' in second_line.lower():
-                metadata['unit'] = 'm'
-            elif 'evaporation' in second_line.lower():
-                metadata['unit'] = 'mm'
-            elif 'discharge' in second_line.lower() or 'flow' in second_line.lower():
+            elif '_in_m' in desc_lower or '[m³/s]' in desc_lower or '[m3/s]' in desc_lower:
                 metadata['unit'] = 'm³/s'
-            elif 'precipitation' in second_line.lower() or 'rain' in second_line.lower():
+            elif 'evaporation' in desc_lower:
+                metadata['unit'] = 'mm'
+            elif 'discharge' in desc_lower or 'flow' in desc_lower:
+                metadata['unit'] = 'm³/s'
+            elif 'precipitation' in desc_lower or 'rain' in desc_lower:
                 metadata['unit'] = 'mm'
 
     # Find rows to skip (metadata rows where YY column is not a 4-digit year)
@@ -141,10 +169,11 @@ def concatenate_dataframes(df_list):
 
         # Determine the prefix to use for columns
         # Strategy:
-        # - Single column files: use parameter description (from line 2)
-        # - Multi-column files: use filename (to avoid very long column names)
+        # - Single column files: use parameter description (from line 2) or filename
+        # - Multi-column files with model/run info: use short model_run_prefix (e.g., "sinn100_d0")
+        # - Other multi-column files: use filename or parameter
         if len(df.columns) == 1:
-            # Single column - prefer parameter description
+            # Single column - prefer parameter description for meaningful names
             if 'parameter' in metadata and metadata['parameter']:
                 prefix = metadata['parameter']
             elif 'filename_noext' in metadata and metadata['filename_noext']:
@@ -152,30 +181,38 @@ def concatenate_dataframes(df_list):
             elif 'filename' in metadata and metadata['filename']:
                 prefix = metadata['filename']
             else:
-                prefix = None
+                # Fallback: use the column name itself
+                prefix = str(df.columns[0])
         else:
-            # Multiple columns - prefer filename to keep column names shorter
-            if 'filename_noext' in metadata and metadata['filename_noext']:
+            # Multiple columns - use shortest meaningful prefix
+            # Priority: model_run_prefix > filename_noext > filename > parameter
+            if 'model_run_prefix' in metadata and metadata['model_run_prefix']:
+                prefix = metadata['model_run_prefix']
+            elif 'filename_noext' in metadata and metadata['filename_noext']:
                 prefix = metadata['filename_noext']
             elif 'filename' in metadata and metadata['filename']:
                 prefix = metadata['filename']
             elif 'parameter' in metadata and metadata['parameter']:
-                # Fallback to parameter if no filename
-                prefix = metadata['parameter']
+                # Use parameter if no filename (truncate if too long)
+                param = metadata['parameter']
+                prefix = param[:50] if len(param) > 50 else param  # Limit to 50 chars
             else:
-                prefix = None
+                # Last resort: use generic prefix with index
+                prefix = f"file{df_list.index(df)}"
 
-        # Rename columns if we have a prefix
-        if prefix and len(df.columns) > 0:
+        # Rename columns with prefix
+        if len(df.columns) > 0:
             # Create new column names
             new_columns = []
             for col in df.columns:
                 if len(df.columns) == 1:
-                    # Single column - use prefix directly
+                    # Single column - use prefix directly (it's already meaningful)
                     new_columns.append(prefix)
                 else:
-                    # Multiple columns - combine prefix with original column name
-                    new_columns.append(f"{prefix}_{col}")
+                    # Multiple columns - ALWAYS combine prefix with column name
+                    # Clean up the column name (remove quotes)
+                    col_clean = str(col).strip('"').strip("'")
+                    new_columns.append(f"{prefix}_{col_clean}")
 
             df_renamed = df.copy()
             df_renamed.columns = new_columns
@@ -183,6 +220,7 @@ def concatenate_dataframes(df_list):
             df_renamed.attrs = df.attrs
             renamed_df_list.append(df_renamed)
         else:
+            # No columns - shouldn't happen, but handle gracefully
             renamed_df_list.append(df)
 
     # Concatenate along columns (join on date index)
@@ -604,8 +642,12 @@ if uploaded_files:
                 orig_cols = list(temp_df.columns)
                 param = metadata.get('parameter', 'N/A')
                 fname = metadata.get('filename', file_names[i])
+                model = metadata.get('model_setup', '-')
+                run = metadata.get('run_id', '-')
                 col_info.append({
                     'File': fname,
+                    'Model Setup': model,
+                    'Run ID': run,
                     'Parameter (Line 2)': param,
                     'Original Columns': ', '.join(orig_cols)
                 })
