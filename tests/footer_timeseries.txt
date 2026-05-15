@@ -1,0 +1,7 @@
+YY	MM	DD	HH	"13"	"14"
+routed discharge [mm per subbasin] _submodel:routing_model
+--	--	--	--	0.5	0.5
+2015	1	1	24	1.0	2.0
+2015	1	2	24	3.0	4.0
+----------------------
+coeff.var.lin	-10	0.1	0.2

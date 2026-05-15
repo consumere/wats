@@ -7,6 +7,8 @@ import os
 import xarray as xr
 from hydroeval import evaluator, nse, kge
 
+TIME_COLUMNS = ['YY', 'MM', 'DD', 'HH']
+
 # Configure Streamlit page
 st.set_page_config(
     page_title="Time Series Data Viewer",
@@ -47,8 +49,18 @@ def read_data_file(file_path):
     first_line = lines[0]
     if '\t' in first_line:
         sep = '\t'
+        header_parts = first_line.rstrip('\n').split('\t')
     else:
         sep = r'\s+'
+        header_parts = first_line.split()
+
+    header_parts = [part.strip().strip('"').strip("'") for part in header_parts]
+    if header_parts[:4] != TIME_COLUMNS:
+        found = ' '.join(header_parts[:4]) if header_parts else '<empty header>'
+        raise ValueError(
+            f"{os.path.basename(file_path)} is not a supported time-series file. "
+            f"Expected first columns: {' '.join(TIME_COLUMNS)}; found: {found}"
+        )
 
     # Extract metadata for units/descriptions
     metadata = {}
@@ -136,8 +148,32 @@ def read_data_file(file_path):
                        na_values=[-9999, 0.0],
                        skip_blank_lines=True,
                        encoding='cp1252',
-                       low_memory=False,
-                       parse_dates={'date': ['YY', 'MM', 'DD']})
+                       low_memory=False)
+
+    df.columns = [str(col).strip().strip('"').strip("'") for col in df.columns]
+    missing_time_cols = [col for col in TIME_COLUMNS[:3] if col not in df.columns]
+    if missing_time_cols:
+        raise ValueError(
+            f"{filename} is missing required time column(s): {', '.join(missing_time_cols)}"
+        )
+
+    date_parts = df[TIME_COLUMNS[:3]].apply(pd.to_numeric, errors='coerce')
+    invalid_dates = date_parts.isna().any(axis=1)
+    if invalid_dates.any():
+        first_bad_pos = invalid_dates.to_numpy().argmax()
+        if invalid_dates.iloc[first_bad_pos:].all():
+            df = df.iloc[:first_bad_pos].copy()
+            date_parts = date_parts.iloc[:first_bad_pos].copy()
+        else:
+            first_bad_row = int(invalid_dates.idxmax()) + 2
+            raise ValueError(f"{filename} contains an invalid date near file row {first_bad_row}")
+
+    df.insert(0, 'date', pd.to_datetime(
+        date_parts.rename(columns={'YY': 'year', 'MM': 'month', 'DD': 'day'}),
+        errors='raise'
+    ))
+
+    df.drop(labels=TIME_COLUMNS[:3], axis=1, inplace=True)
 
     # Drop HH column if it exists
     if 'HH' in df.columns:
@@ -606,6 +642,7 @@ if uploaded_files:
         # Read all uploaded files
         df_list = []
         file_names = []
+        skipped_files = []
 
         with st.spinner('Loading and processing files...'):
             for uploaded_file in uploaded_files:
@@ -613,12 +650,27 @@ if uploaded_files:
                 with open(file_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
 
-                df_temp = read_data_file(file_path)
-                df_list.append(df_temp)
-                file_names.append(uploaded_file.name)
+                try:
+                    df_temp = read_data_file(file_path)
+                    df_list.append(df_temp)
+                    file_names.append(uploaded_file.name)
+                except ValueError as e:
+                    skipped_files.append((uploaded_file.name, str(e)))
 
                 # Clean up individual file
                 os.remove(file_path)
+
+        if not df_list:
+            if skipped_files:
+                skipped_summary = "\n".join(
+                    f"- {name}: {reason}" for name, reason in skipped_files[:20]
+                )
+                raise ValueError(
+                    "No supported time-series files were found. "
+                    "Upload files whose first columns are YY MM DD HH.\n"
+                    f"{skipped_summary}"
+                )
+            raise ValueError("No files were loaded.")
 
         # Concatenate all dataframes
         df = concatenate_dataframes(df_list)
@@ -631,7 +683,11 @@ if uploaded_files:
                     unit = temp_df.attrs['metadata']['unit']
                     break
 
-        st.success(f"✅ Successfully loaded {len(uploaded_files)} file(s): {', '.join(file_names)}")
+        st.success(f"✅ Successfully loaded {len(file_names)} file(s): {', '.join(file_names)}")
+        if skipped_files:
+            with st.expander(f"⚠️ Skipped {len(skipped_files)} non-time-series file(s)", expanded=False):
+                for name, reason in skipped_files:
+                    st.warning(f"{name}: {reason}")
 
         # Debug: Show column names and metadata
         with st.expander("🔍 Column Information & File Mapping", expanded=True):

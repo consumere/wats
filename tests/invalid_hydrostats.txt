@@ -1,0 +1,2 @@
+Hydrostats from 2015-01-01 to 2017-12-31 on Bad_Brueckenau-qoutjl:
+KGE: 0.72
