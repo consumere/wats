@@ -38,9 +38,10 @@ def read_data_file(file_path):
     """
     with open(file_path, 'r', encoding='cp1252') as f:
         lines = f.readlines()
+    if not lines:
+        raise ValueError(f"{os.path.basename(file_path)} is empty")
 
     # Extract filename without extension for potential use
-    import os
     import re
     filename = os.path.basename(file_path)
     filename_noext = os.path.splitext(filename)[0]
@@ -145,7 +146,7 @@ def read_data_file(file_path):
                        sep=sep,
                        engine='c',
                        skiprows=skip_rows if skip_rows else None,
-                       na_values=[-9999, 0.0],
+                       na_values=[-9999],
                        skip_blank_lines=True,
                        encoding='cp1252',
                        low_memory=False)
@@ -587,12 +588,19 @@ def plot_multi_overview(df, selected_cols, log_scale=False, unit=None):
     return fig
 
 
+def clear_uploaded_data():
+    generation = st.session_state.get('upload_generation', 0) + 1
+    st.session_state.clear()
+    st.session_state['upload_generation'] = generation
+
+
 # Streamlit app
 st.title("📊 WATS - Water & Atmospheric Time Series Viewer")
 st.markdown("""
 Advanced visualization tool for hydrological and meteorological data.
 Upload time series files (text/CSV) or raster data (NetCDF).
 """)
+st.button("Clear data", on_click=clear_uploaded_data)
 
 # Sidebar with instructions
 with st.sidebar:
@@ -631,7 +639,7 @@ with main_tab1:
         "Upload your time series data file(s)",
         accept_multiple_files=True,
         help="Upload one or more delimited files with temporal data (any file type)",
-        key="ts_upload"
+        key=f"ts_upload_{st.session_state.get('upload_generation', 0)}"
     )
 
 if uploaded_files:
@@ -1016,7 +1024,7 @@ with main_tab2:
         type=['nc', 'nc4', 'netcdf'],
         accept_multiple_files=True,
         help="Upload one or more NetCDF files for visualization and comparison",
-        key="nc_upload"
+        key=f"nc_upload_{st.session_state.get('upload_generation', 0)}"
     )
 
     if nc_uploaded_files:

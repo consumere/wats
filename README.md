@@ -9,6 +9,7 @@ An advanced Streamlit-based web application for visualizing and analyzing time s
 - **Auto-detection**: Automatically detects metadata rows, separators (tab/whitespace), and file formats
 - **Flexible format**: No file extension required - handles any delimited text file
 - **Unit extraction**: Automatically extracts physical units from file headers (mm, m³/s, etc.)
+- **Clear data**: Reset both uploaders and their visualization controls with one button
 
 ### 📊 Visualization Types
 1. **Time Series**: Raw data plots with interactive column selection
@@ -52,7 +53,7 @@ Input files should have:
 - **First row**: Column headers (YY MM DD HH [data columns...])
 - **Metadata rows**: Auto-detected and skipped
 - **Data rows**: Temporal data with numeric values
-- **Missing values**: Coded as -9999 or 0.0
+- **Missing values**: Coded as -9999; zero remains a valid measurement
 - **Encoding**: cp1252 or ISO-8859-1
 - **Separators**: Tab or whitespace (auto-detected)
 

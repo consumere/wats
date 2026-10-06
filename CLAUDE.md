@@ -183,7 +183,7 @@ Input files must have:
 - First row: Column headers (YY MM DD HH [data columns])
 - Rows 1-N: Metadata with non-year values in YY column (auto-detected and skipped)
 - Data rows: Temporal data with numeric values
-- Missing values coded as -9999 (or 0.0)
+- Missing values coded as -9999; zero remains a valid measurement
 - Encoding: cp1252 or ISO-8859-1
 - Separators: Tab-delimited or whitespace-delimited (auto-detected)
 - **Any file extension** (no restriction on file type)
