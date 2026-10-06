@@ -27,7 +27,7 @@ An advanced Streamlit-based web application for visualizing and analyzing time s
 
 ### 📈 Analysis Features
 - Logarithmic scale toggle (applies to all plots)
-- Interactive column selection
+- Interactive column selection (defaults to the last two data columns, or the only column when there is one)
 - Comprehensive statistics table with missing value tracking
 - CSV export (complete dataset or selected columns)
 

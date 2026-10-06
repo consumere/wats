@@ -419,7 +419,7 @@ def plot_seasonal_decomposition(df, columns, unit=None):
 
         # Monthly boxplot
         monthly_data = [plot_df[plot_df['month'] == m]['value'].values for m in range(1, 13)]
-        bp1 = axes[idx, 0].boxplot(monthly_data, labels=['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        bp1 = axes[idx, 0].boxplot(monthly_data, tick_labels=['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                                                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
                                patch_artist=True, showmeans=True)
 
@@ -725,7 +725,7 @@ if uploaded_files:
             selected_columns = st.multiselect(
                 "Select columns to plot",
                 all_columns,
-                default=all_columns[:3] if len(all_columns) > 3 else all_columns
+                default=all_columns[-2:]
             )
 
             # Log scale toggle - PROMINENT
